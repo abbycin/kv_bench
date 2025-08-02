@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+pushd .
 cd ..
 cargo build --release 1>/dev/null 2> /dev/null
 
@@ -21,7 +22,7 @@ function samples() {
                         then
                                 exit 1
                         fi
-                        ./target/release/kv_bench --path /home/abby/mace_bench --threads $i --iterations 100000 --mode mixed --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --insert-ratio 70
+                        ./target/release/kv_bench --path /home/abby/mace_bench --threads $i --iterations 100000 --mode mixed --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --insert-ratio 30
                         if test $? -ne 0
                         then
                                 exit 1
@@ -30,6 +31,7 @@ function samples() {
         done
 }
 
-echo mode,threads,key_size,value_size,insert_ratio,ops > x.csv
-samples 2>> x.csv
-
+echo mode,threads,key_size,value_size,insert_ratio,ops > scripts/x.csv
+samples 2>> scripts/x.csv
+popd
+./bin/python plot.py
