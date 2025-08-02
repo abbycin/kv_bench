@@ -1,0 +1,10 @@
+/target
+/scripts/bin
+/scripts/include
+/scripts/lib
+/scripts/lib64
+/scripts/shares/
+/scripts/.gitignore
+*.png
+*.csv
+pyvenv.cfg
