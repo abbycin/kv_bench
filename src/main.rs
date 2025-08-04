@@ -27,7 +27,7 @@ struct Args {
     #[arg(short = 'i', long, default_value = "10000")]
     iterations: usize,
 
-    #[arg(short = 'r', long, default_value = "50")]
+    #[arg(short = 'r', long, default_value = "30")]
     insert_ratio: u8,
 
     #[arg(long, default_value = "false")]
