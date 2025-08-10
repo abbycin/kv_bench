@@ -62,8 +62,9 @@ fn main() {
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
     opt.tmp_store = true;
-    // currently we don't have prefix encode, so enlarge the inline size to avoid indirection
+    // make sure there's no remote indirection
     opt.max_inline_size = 4096;
+    opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let db = Mace::new(opt.validate().unwrap()).unwrap();
 
     let value = Arc::new(vec![b'0'; args.value_size]);
