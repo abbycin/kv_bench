@@ -64,7 +64,7 @@ fn main() {
     opt.tmp_store = true;
     // make sure there's no remote indirection
     opt.max_inline_size = 4096;
-    opt.cache_capacity = 3 << 30; // this is very important for large key-value store
+    // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let db = Mace::new(opt.validate().unwrap()).unwrap();
 
     let value = Arc::new(vec![b'0'; args.value_size]);
@@ -163,12 +163,10 @@ fn main() {
 
     // println!("{:<20} {}", "Test Mode:", args.mode);
     // println!("{:<20} {}", "Threads:", args.threads);
-    // println!("{:<20} {total}", "Total Ops:");
-    // println!("{:<20} {:.2}s", "Duration:", duration.as_secs_f64());
-    // println!("{:<20} {ops:.2}", "OPS:");
+    // println!("{:<20} {}", "Iterations", args.iterations);
     // println!("{:<20} {}B", "Key Size:", args.key_size);
     // println!("{:<20} {}B", "Value Size:", args.value_size);
-
+    // println!("{:<20} {ops}", "Total Ops:");
     // if args.mode == "mixed" {
     //     println!("{:<20} {}%", "Insert Ratio:", args.insert_ratio);
     // }
