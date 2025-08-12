@@ -5,7 +5,7 @@ import sys
 
 def real_mode(m):
     if m == "mixed":
-        return "MIXED (70% Get, 30% Put)"
+        return "MIXED (70% Get, 30% Insert)"
     return m.upper()
 
 name = sys.argv[1]

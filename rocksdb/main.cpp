@@ -77,13 +77,7 @@ int main(int argc, char *argv[]) {
     }
 
     rocksdb::Options options;
-    options.disable_auto_compactions = true;
     options.create_if_missing = true;
-    options.max_write_buffer_number = 10;
-    options.target_file_size_base = 64 << 20;
-    options.write_buffer_size = 64 << 20;
-    options.level0_file_num_compaction_trigger = 500;
-    options.max_bytes_for_level_base = 2 << 30;
     auto ropt = rocksdb::ReadOptions();
     auto wopt = rocksdb::WriteOptions();
     std::vector<std::thread> wg;
