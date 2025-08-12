@@ -59,26 +59,36 @@ fn main() {
         return;
     }
 
+    let mut keys: Vec<Vec<Vec<u8>>> = Vec::with_capacity(args.threads);
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
     opt.tmp_store = true;
-    // make sure there's no remote indirection
-    opt.max_inline_size = 4096;
     // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let db = Mace::new(opt.validate().unwrap()).unwrap();
 
+    let mut rng = rand::rng();
     let value = Arc::new(vec![b'0'; args.value_size]);
-    if args.mode == "get" {
-        for tid in 0..args.threads {
-            for i in 0..args.iterations {
-                let key = format!("key_{tid}_{i}");
-                let mut tmp = key.into_bytes();
-                tmp.resize(args.key_size, b'x');
-                let pre_tx = db.begin().unwrap();
-                pre_tx.put(&tmp, &*value).unwrap();
-                pre_tx.commit().unwrap();
-            }
+    for tid in 0..args.threads {
+        let mut tk = Vec::with_capacity(args.iterations);
+        for i in 0..args.iterations {
+            let mut key = format!("key_{tid}_{i}").into_bytes();
+            key.resize(args.key_size, b'x');
+            tk.push(key);
         }
+        if args.random {
+            tk.shuffle(&mut rng);
+        }
+        keys.push(tk);
+    }
+
+    if args.mode == "get" {
+        let pre_tx = db.begin().unwrap();
+        (0..args.threads).for_each(|tid| {
+            for i in 0..args.iterations {
+                pre_tx.put(&keys[tid][i], &*value).unwrap();
+            }
+        });
+        pre_tx.commit().unwrap();
     }
 
     let barrier = Arc::new(std::sync::Barrier::new(args.threads));
@@ -88,6 +98,7 @@ fn main() {
     let h: Vec<JoinHandle<()>> = (0..args.threads)
         .map(|tid| {
             let db = db.clone();
+            let tk: &Vec<Vec<u8>> = unsafe { std::mem::transmute(&keys[tid]) };
             let total_ops = total_ops.clone();
             let barrier = Arc::clone(&barrier);
             let mode = args.mode.clone();
@@ -96,18 +107,6 @@ fn main() {
             let val = value.clone();
 
             std::thread::spawn(move || {
-                let mut keys: Vec<Vec<u8>> = Vec::with_capacity(args.iterations);
-                for i in 0..args.iterations {
-                    let key = format!("key_{tid}_{i}");
-                    let mut tmp = key.into_bytes();
-                    tmp.resize(args.key_size, b'x');
-                    keys.push(tmp);
-                }
-
-                let mut rng = rand::rng();
-                if args.random {
-                    keys.shuffle(&mut rng);
-                }
                 barrier.wait();
 
                 {
@@ -118,21 +117,21 @@ fn main() {
 
                 match mode.as_str() {
                     "insert" => {
-                        for key in &keys {
+                        for key in tk {
                             let tx = db.begin().unwrap();
                             tx.put(key.as_slice(), val.as_slice()).unwrap();
                             tx.commit().unwrap();
                         }
                     }
                     "get" => {
-                        for key in &keys {
+                        for key in tk {
                             let tx = db.view().unwrap();
                             tx.get(key).unwrap();
                         }
                     }
                     "mixed" => {
-                        for key in &keys {
-                            let is_insert = rng.random_range(0..100) < insert_ratio;
+                        for key in tk {
+                            let is_insert = rand::random_range(0..100) < insert_ratio;
 
                             if is_insert {
                                 let tx = db.begin().unwrap();
@@ -140,7 +139,7 @@ fn main() {
                                 tx.commit().unwrap();
                             } else {
                                 let tx = db.view().unwrap();
-                                let _ = tx.get(key); // may not insert
+                                let _ = tx.get(key); // not found
                             }
                         }
                     }

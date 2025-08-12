@@ -1,14 +1,17 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 from adjustText import adjust_text
+import sys
 
 def real_mode(m):
     if m == "mixed":
-        return "mixed (70% read, 30% write)"
-    return m
+        return "MIXED (70% Get, 30% Put)"
+    return m.upper()
 
+name = sys.argv[1]
+prefix = name.split(".")[0]
 # 读取数据
-df = pd.read_csv("./x.csv")
+df = pd.read_csv(f"./{name}")
 
 # 按 mode 分组
 modes = df["mode"].unique()
@@ -40,11 +43,11 @@ for mode in modes:
     adjust_text(texts, arrowprops=dict(arrowstyle="->", color='gray'))
 
     # 设置图表样式
-    plt.title(f"Performance: {real_mode(mode).upper()}", fontsize=16)
+    plt.title(f"{prefix.upper()}: {real_mode(mode)}", fontsize=16)
     plt.xlabel("Threads", fontsize=14)
     plt.ylabel("OPS", fontsize=14)
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f"{mode}.png")
+    plt.savefig(f"{prefix}_{mode}.png")
     plt.close()

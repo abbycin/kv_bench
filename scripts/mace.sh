@@ -21,20 +21,20 @@ function samples() {
                         ./target/release/kv_bench --path /home/abby/mace_bench --threads $i --iterations 100000 --mode get --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]}
                         if test $? -ne 0
                         then
-                                echo "insert threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
+                                echo "get threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
                                 exit 1
                         fi
                         ./target/release/kv_bench --path /home/abby/mace_bench --threads $i --iterations 100000 --mode mixed --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --insert-ratio 30
                         if test $? -ne 0
                         then
-                                echo "insert threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
+                                echo "mixed threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
                                 exit 1
                         fi
                 done
         done
 }
 
-echo mode,threads,key_size,value_size,insert_ratio,ops > scripts/x.csv
-samples 2>> scripts/x.csv
+echo mode,threads,key_size,value_size,insert_ratio,ops > scripts/mace.csv
+samples 2>> scripts/mace.csv
 popd
-./bin/python plot.py
+./bin/python plot.py mace.csv
