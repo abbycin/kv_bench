@@ -78,6 +78,8 @@ int main(int argc, char *argv[]) {
 
     rocksdb::Options options;
     options.create_if_missing = true;
+    options.allow_concurrent_memtable_write = true;
+    options.enable_pipelined_write = true;
     auto ropt = rocksdb::ReadOptions();
     auto wopt = rocksdb::WriteOptions();
     std::vector<std::thread> wg;
