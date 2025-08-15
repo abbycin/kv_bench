@@ -63,6 +63,7 @@ fn main() {
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
     opt.tmp_store = true;
+    opt.consolidate_threshold = 512;
     // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let db = Mace::new(opt.validate().unwrap()).unwrap();
 
