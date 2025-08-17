@@ -8,11 +8,14 @@ edition = "2024"
 mace = { path = "/home/workspace/gits/github/mace"}
 clap = { version = "4.5.42", features = ["derive"] }
 rand = "0.9.2"
+log = "0.4.22"
 coreid = { path = "coreid"}
+logger = { path = "logger"}
 
 [profile.release]
 lto = true
 opt-level = 3
+debug = true
 
 [profile.release-with-symbol]
 inherits = "release"

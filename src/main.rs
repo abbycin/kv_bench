@@ -1,4 +1,5 @@
 use clap::Parser;
+use logger::Logger;
 use mace::{Mace, Options};
 use rand::prelude::*;
 use std::path::Path;
@@ -35,6 +36,8 @@ struct Args {
 }
 
 fn main() {
+    Logger::init().add_file("/tmp/x.log", true);
+    log::set_max_level(log::LevelFilter::Debug);
     let args = Args::parse();
 
     let path = Path::new(&args.path);
@@ -108,6 +111,7 @@ fn main() {
             let val = value.clone();
 
             std::thread::spawn(move || {
+                coreid::bind_core(tid);
                 barrier.wait();
 
                 {
