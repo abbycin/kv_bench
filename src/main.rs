@@ -66,7 +66,7 @@ fn main() {
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
     opt.tmp_store = true;
-    opt.consolidate_threshold = 512;
+    opt.gc_timeout = 1000 * 60; // make sure GC will not work
     // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let db = Mace::new(opt.validate().unwrap()).unwrap();
 
@@ -184,7 +184,13 @@ fn main() {
     };
     // eprintln!("mode,threads,key_size,value_size,insert_ratio,ops");
     eprintln!(
-        "{},{},{},{},{},{:.2}",
-        args.mode, args.threads, args.key_size, args.value_size, ratio, ops
+        "{},{},{},{},{},{:.2},{}",
+        args.mode,
+        args.threads,
+        args.key_size,
+        args.value_size,
+        ratio,
+        ops,
+        duration.as_millis()
     );
 }

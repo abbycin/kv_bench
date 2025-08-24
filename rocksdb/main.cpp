@@ -80,8 +80,14 @@ int main(int argc, char *argv[]) {
     options.create_if_missing = true;
     options.allow_concurrent_memtable_write = true;
     options.enable_pipelined_write = true;
+    // the following three options makes it not trigger GC in test
+    options.level0_file_num_compaction_trigger = 1000;
+    options.write_buffer_size = 1 << 30;
+    options.max_write_buffer_number = 5;
+
     auto ropt = rocksdb::ReadOptions();
     auto wopt = rocksdb::WriteOptions();
+    // wopt.disableWAL = true;
     std::vector<std::thread> wg;
     std::vector<std::vector<std::string>> keys{};
     std::atomic<uint64_t> total_op{0};
@@ -175,7 +181,8 @@ int main(int argc, char *argv[]) {
         return args.mode == "insert" ? 100 : 0;
     }();
     double ops = static_cast<double>(total_op.load(std::memory_order_relaxed)) / b.elapse_sec();
-    std::println("{},{},{},{},{},{:.2f}", args.mode, args.threads, args.key_size, args.value_size, ratio, ops);
+    std::println("{},{},{},{},{},{:.2f},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, ops,
+                 b.elapse_ms());
     delete db;
     std::filesystem::remove_all(args.path);
 }

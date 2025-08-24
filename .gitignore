@@ -8,3 +8,4 @@
 *.png
 *.csv
 pyvenv.cfg
+Cargo.lock
