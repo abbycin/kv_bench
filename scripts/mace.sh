@@ -34,7 +34,7 @@ function samples() {
         done
 }
 
-echo mode,threads,key_size,value_size,insert_ratio,ops > scripts/mace.csv
+echo mode,threads,key_size,value_size,insert_ratio,ops,elasped > scripts/mace.csv
 samples 2>> scripts/mace.csv
 popd
 ./bin/python plot.py mace.csv

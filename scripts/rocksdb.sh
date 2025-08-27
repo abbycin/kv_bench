@@ -35,7 +35,7 @@ function samples() {
         done
 }
 
-echo mode,threads,key_size,value_size,insert_ratio,ops > ../scripts/rocksdb.csv
+echo mode,threads,key_size,value_size,insert_ratio,ops,elapsed > ../scripts/rocksdb.csv
 samples 1>> ../scripts/rocksdb.csv
 popd
 ./bin/python plot.py rocksdb.csv

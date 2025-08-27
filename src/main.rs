@@ -1,4 +1,5 @@
 use clap::Parser;
+#[cfg(target_os = "linux")]
 use logger::Logger;
 use mace::{Mace, Options};
 use rand::prelude::*;
@@ -36,8 +37,11 @@ struct Args {
 }
 
 fn main() {
-    Logger::init().add_file("/tmp/x.log", true);
-    log::set_max_level(log::LevelFilter::Debug);
+    #[cfg(target_os = "linux")]
+    {
+        Logger::init().add_file("/tmp/x.log", true);
+        log::set_max_level(log::LevelFilter::Info);
+    }
     let args = Args::parse();
 
     let path = Path::new(&args.path);
