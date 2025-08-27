@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# mace = { git = "https://git.o2c.fun/abby/mace.git", branch = "task-64-1" }
-mace = { path = "/home/workspace/gits/github/mace"}
+mace = { git = "https://github.com/abbycin/mace" }
 clap = { version = "4.5.42", features = ["derive"] }
 rand = "0.9.2"
 log = "0.4.22"
