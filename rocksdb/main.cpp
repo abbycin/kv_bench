@@ -1,6 +1,6 @@
 #include <algorithm>
 #include <atomic>
-#include <print>
+#include <fmt/format.h>
 #include <random>
 #include <rocksdb/cache.h>
 #include <rocksdb/db.h>
@@ -52,27 +52,27 @@ int main(int argc, char *argv[]) {
     CLI11_PARSE(app, argc, argv);
 
     if (args.path.empty()) {
-        std::println("path is empty");
+        fmt::println("path is empty");
         return 1;
     }
 
     if (std::filesystem::exists(args.path)) {
-        std::println("path `{}` already exists", args.path);
+        fmt::println("path `{}` already exists", args.path);
         return 1;
     }
 
     if (args.mode != "insert" && args.mode != "get" && args.mode != "mixed") {
-        std::println("Error: Invalid mode");
+        fmt::println("Error: Invalid mode");
         return 1;
     }
 
     if (args.key_size < 16 || args.value_size < 16) {
-        std::println("Error: key_size or value_size too small, must >= 16");
+        fmt::println("Error: key_size or value_size too small, must >= 16");
         return 1;
     }
 
     if (args.insert_ratio > 100) {
-        std::println("Error: Insert ratio must be between 0 and 100");
+        fmt::println("Error: Insert ratio must be between 0 and 100");
         return 1;
     }
 
@@ -181,7 +181,7 @@ int main(int argc, char *argv[]) {
         return args.mode == "insert" ? 100 : 0;
     }();
     double ops = static_cast<double>(total_op.load(std::memory_order_relaxed)) / b.elapse_sec();
-    std::println("{},{},{},{},{},{:.2f},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, ops,
+    fmt::println("{},{},{},{},{},{:.2f},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, ops,
                  b.elapse_ms());
     delete db;
     std::filesystem::remove_all(args.path);

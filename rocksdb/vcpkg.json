@@ -1,5 +1,14 @@
 {
   "dependencies": [
-    "cli11"
+    "cli11",
+    "rocksdb",
+    "fmt"
+  ],
+  "builtin-baseline": "120deac3062162151622ca4860575a33844ba10b",
+  "overrides": [
+    {
+      "name": "rocksdb",
+      "version": "10.4.2"
+    }
   ]
 }
