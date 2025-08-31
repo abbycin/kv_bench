@@ -115,7 +115,7 @@ fn main() {
             let val = value.clone();
 
             std::thread::spawn(move || {
-                coreid::bind_core(tid);
+                // coreid::bind_core(tid);
                 barrier.wait();
 
                 {
