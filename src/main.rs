@@ -73,6 +73,7 @@ fn main() {
     opt.tmp_store = args.mode != "get";
     opt.gc_timeout = 1000 * 60; // make sure GC will not work
     let mut saved = opt.clone();
+    saved.tmp_store = false;
     // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
 
@@ -100,6 +101,7 @@ fn main() {
         });
         pre_tx.commit().unwrap();
         drop(pre_tx);
+        log::info!("=====");
         drop(db);
         // re-open db
         saved.tmp_store = true;
