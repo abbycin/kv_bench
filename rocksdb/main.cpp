@@ -128,6 +128,10 @@ int main(int argc, char *argv[]) {
         }
         kv->Commit();
         delete kv;
+        delete db;
+        // re-open db
+        s = rocksdb::OptimisticTransactionDB::Open(options, args.path, &db);
+        assert(s.ok());
     }
 
     for (size_t tid = 0; tid < args.threads; ++tid) {

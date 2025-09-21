@@ -4,6 +4,7 @@ use logger::Logger;
 use mace::{Mace, Options};
 use rand::prelude::*;
 use std::path::Path;
+use std::process::exit;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -48,31 +49,32 @@ fn main() {
 
     if args.path.is_empty() {
         eprintln!("path is empty");
-        return;
+        exit(1);
     }
 
     if path.exists() {
         eprintln!("path {:?} already exists", args.path);
-        return;
+        exit(1);
     }
 
     if args.key_size < 16 || args.value_size < 16 {
         eprintln!("Error: key_size or value_size too small, must >= 16");
-        return;
+        exit(1);
     }
 
     if args.insert_ratio > 100 {
         eprintln!("Error: Insert ratio must be between 0 and 100");
-        return;
+        exit(1);
     }
 
     let mut keys: Vec<Vec<Vec<u8>>> = Vec::with_capacity(args.threads);
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
-    opt.tmp_store = true;
+    opt.tmp_store = args.mode != "get";
     opt.gc_timeout = 1000 * 60; // make sure GC will not work
+    let mut saved = opt.clone();
     // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
-    let db = Mace::new(opt.validate().unwrap()).unwrap();
+    let mut db = Mace::new(opt.validate().unwrap()).unwrap();
 
     let mut rng = rand::rng();
     let value = Arc::new(vec![b'0'; args.value_size]);
@@ -97,6 +99,11 @@ fn main() {
             }
         });
         pre_tx.commit().unwrap();
+        drop(pre_tx);
+        drop(db);
+        // re-open db
+        saved.tmp_store = true;
+        db = Mace::new(saved.validate().unwrap()).unwrap();
     }
 
     let barrier = Arc::new(std::sync::Barrier::new(args.threads));
