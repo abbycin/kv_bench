@@ -1,0 +1,58 @@
+{
+        // Use IntelliSense to learn about possible attributes.
+        // Hover to view descriptions of existing attributes.
+        // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+        "version": "0.2.0",
+        "configurations": [
+                {
+                        "type": "lldb",
+                        "request": "launch",
+                        "name": "Debug executable 'kv_bench'",
+                        "cargo": {
+                                "args": [
+                                        "build",
+                                        "--bin=kv_bench",
+                                        "--package=kv_bench"
+                                ],
+                                "filter": {
+                                        "name": "kv_bench",
+                                        "kind": "bin"
+                                }
+                        },
+                        "args": [
+                                "--path",
+                                "/home/abby/mace_bench",
+                                "--threads",
+                                "1",
+                                "--iterations",
+                                "100000",
+                                "--mode",
+                                "insert",
+                                "--key-size",
+                                "1024",
+                                "--value-size",
+                                "16"
+                        ],
+                        "cwd": "${workspaceFolder}"
+                },
+                {
+                        "type": "lldb",
+                        "request": "launch",
+                        "name": "Debug unit tests in executable 'kv_bench'",
+                        "cargo": {
+                                "args": [
+                                        "test",
+                                        "--no-run",
+                                        "--bin=kv_bench",
+                                        "--package=kv_bench"
+                                ],
+                                "filter": {
+                                        "name": "kv_bench",
+                                        "kind": "bin"
+                                }
+                        },
+                        "args": [],
+                        "cwd": "${workspaceFolder}"
+                }
+        ]
+}

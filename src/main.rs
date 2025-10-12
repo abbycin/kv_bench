@@ -2,12 +2,18 @@ use clap::Parser;
 #[cfg(target_os = "linux")]
 use logger::Logger;
 use mace::{Mace, Options};
+#[cfg(feature = "custom_alloc")]
+use myalloc::{MyAlloc, print_filtered_trace};
 use rand::prelude::*;
 use std::path::Path;
 use std::process::exit;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
+
+#[cfg(feature = "custom_alloc")]
+#[global_allocator]
+static GLOBAL: MyAlloc = MyAlloc;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -40,7 +46,7 @@ struct Args {
 fn main() {
     #[cfg(target_os = "linux")]
     {
-        Logger::init().add_file("/tmp/x.log", true);
+        Logger::init().add_file("/Data/x.log", true);
         log::set_max_level(log::LevelFilter::Info);
     }
     let args = Args::parse();
@@ -71,11 +77,11 @@ fn main() {
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
     opt.tmp_store = args.mode != "get";
-    opt.gc_timeout = 1000 * 60; // make sure GC will not work
     let mut saved = opt.clone();
     saved.tmp_store = false;
     // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
+    db.disable_gc();
 
     let mut rng = rand::rng();
     let value = Arc::new(vec![b'0'; args.value_size]);
@@ -100,8 +106,6 @@ fn main() {
             }
         });
         pre_tx.commit().unwrap();
-        drop(pre_tx);
-        log::info!("=====");
         drop(db);
         // re-open db
         saved.tmp_store = true;
@@ -206,4 +210,7 @@ fn main() {
         ops,
         duration.as_millis()
     );
+    drop(db);
+    #[cfg(feature = "custom_alloc")]
+    print_filtered_trace(|x, y| log::info!("{}{}", x, y));
 }

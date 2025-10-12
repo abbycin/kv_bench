@@ -3,9 +3,12 @@
 /scripts/include
 /scripts/lib
 /scripts/lib64
-/scripts/shares/
+/scripts/share/
 /scripts/.gitignore
 *.png
 *.csv
 pyvenv.cfg
 Cargo.lock
+free.txt
+alloc.txt
+*.zst
