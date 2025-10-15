@@ -41,6 +41,9 @@ struct Args {
 
     #[arg(long, default_value = "false")]
     random: bool,
+
+    #[arg(long, default_value = "8192")]
+    blob_size: usize,
 }
 
 fn main() {
@@ -76,10 +79,11 @@ fn main() {
     let mut keys: Vec<Vec<Vec<u8>>> = Vec::with_capacity(args.threads);
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
+    opt.over_provision = true; // large value will use lots of memeory
+    opt.inline_size = args.blob_size;
     opt.tmp_store = args.mode != "get";
     let mut saved = opt.clone();
     saved.tmp_store = false;
-    // opt.cache_capacity = 3 << 30; // this is very important for large key-value store
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
     db.disable_gc();
 
@@ -180,7 +184,7 @@ fn main() {
     let test_start = start_time.lock().unwrap();
     let duration = test_start.elapsed();
     let total = total_ops.load(std::sync::atomic::Ordering::Relaxed);
-    let ops = total as f64 / duration.as_secs_f64();
+    let ops = (total as f64 / duration.as_secs_f64()) as usize;
 
     // println!("{:<20} {}", "Test Mode:", args.mode);
     // println!("{:<20} {}", "Threads:", args.threads);
