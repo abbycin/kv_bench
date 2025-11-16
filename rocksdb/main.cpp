@@ -6,6 +6,7 @@
 #include <random>
 #include <rocksdb/cache.h>
 #include <rocksdb/db.h>
+#include <rocksdb/env.h>
 #include <rocksdb/options.h>
 #include <rocksdb/table.h>
 #include <rocksdb/utilities/optimistic_transaction_db.h>
@@ -88,9 +89,9 @@ int main(int argc, char *argv[]) {
     table_options.block_cache = cache;
     cfo.table_factory.reset(NewBlockBasedTableFactory(table_options));
     // the following three options makes it not trigger GC in test
-    cfo.level0_file_num_compaction_trigger = 1000;
-    cfo.write_buffer_size = 1 << 30;
-    cfo.max_write_buffer_number = 5;
+    cfo.level0_file_num_compaction_trigger = 10000;
+    cfo.write_buffer_size = 64 << 20;
+    cfo.max_write_buffer_number = 16;
 
     std::vector<rocksdb::ColumnFamilyDescriptor> cfd{};
     cfd.push_back(rocksdb::ColumnFamilyDescriptor("default", cfo));
@@ -99,6 +100,7 @@ int main(int argc, char *argv[]) {
     options.create_if_missing = true;
     options.allow_concurrent_memtable_write = true;
     options.enable_pipelined_write = true;
+    options.env->SetBackgroundThreads(4, rocksdb::Env::Priority::HIGH);
 
     auto ropt = rocksdb::ReadOptions();
     auto wopt = rocksdb::WriteOptions();
