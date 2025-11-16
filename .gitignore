@@ -5,7 +5,6 @@
 /scripts/lib64
 /scripts/share/
 /scripts/.gitignore
-*.png
 *.csv
 pyvenv.cfg
 Cargo.lock
