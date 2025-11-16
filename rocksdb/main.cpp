@@ -1,10 +1,14 @@
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <fmt/format.h>
+#include <memory>
 #include <random>
 #include <rocksdb/cache.h>
 #include <rocksdb/db.h>
+#include <rocksdb/env.h>
 #include <rocksdb/options.h>
+#include <rocksdb/table.h>
 #include <rocksdb/utilities/optimistic_transaction_db.h>
 #include <rocksdb/utilities/transaction.h>
 #include <rocksdb/utilities/transaction_db.h>
@@ -76,17 +80,31 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    rocksdb::Options options;
+    rocksdb::ColumnFamilyOptions cfo{};
+    cfo.enable_blob_files = true;
+    cfo.min_blob_size = 8192;
+    // use 1GB block cache
+    auto cache = rocksdb::NewLRUCache(1 << 30);
+    rocksdb::BlockBasedTableOptions table_options{};
+    table_options.block_cache = cache;
+    cfo.table_factory.reset(NewBlockBasedTableFactory(table_options));
+    // the following three options makes it not trigger GC in test
+    cfo.level0_file_num_compaction_trigger = 10000;
+    cfo.write_buffer_size = 64 << 20;
+    cfo.max_write_buffer_number = 16;
+
+    std::vector<rocksdb::ColumnFamilyDescriptor> cfd{};
+    cfd.push_back(rocksdb::ColumnFamilyDescriptor("default", cfo));
+
+    rocksdb::DBOptions options;
     options.create_if_missing = true;
     options.allow_concurrent_memtable_write = true;
     options.enable_pipelined_write = true;
-    // the following three options makes it not trigger GC in test
-    options.level0_file_num_compaction_trigger = 1000;
-    options.write_buffer_size = 1 << 30;
-    options.max_write_buffer_number = 5;
+    options.env->SetBackgroundThreads(4, rocksdb::Env::Priority::HIGH);
 
     auto ropt = rocksdb::ReadOptions();
     auto wopt = rocksdb::WriteOptions();
+    wopt.no_slowdown = true;
     // wopt.disableWAL = true;
     std::vector<std::thread> wg;
     std::vector<std::vector<std::string>> keys{};
@@ -94,7 +112,8 @@ int main(int argc, char *argv[]) {
     rocksdb::OptimisticTransactionDB *db;
     auto b = nm::Instant::now();
     std::mutex mtx{};
-    auto s = rocksdb::OptimisticTransactionDB::Open(options, args.path, &db);
+    std::vector<rocksdb::ColumnFamilyHandle *> handles{};
+    auto s = rocksdb::OptimisticTransactionDB::Open(options, args.path, cfd, &handles, &db);
     assert(s.ok());
     std::barrier barrier{static_cast<ptrdiff_t>(args.threads)};
 
@@ -117,23 +136,27 @@ int main(int argc, char *argv[]) {
         keys.emplace_back(std::move(key));
     }
 
+    auto *handle = handles[0];
 
     if (args.mode == "get") {
         auto *kv = db->BeginTransaction(wopt);
         for (size_t tid = 0; tid < args.threads; ++tid) {
             auto *tk = &keys[tid];
             for (auto &key: *tk) {
-                kv->Put(key, val);
+                kv->Put(handle, key, val);
             }
         }
         kv->Commit();
         delete kv;
+        delete handle;
         delete db;
+        handles.clear();
         // re-open db
-        s = rocksdb::OptimisticTransactionDB::Open(options, args.path, &db);
+        s = rocksdb::OptimisticTransactionDB::Open(options, args.path, cfd, &handles, &db);
         assert(s.ok());
     }
 
+    handle = handles[0];
     for (size_t tid = 0; tid < args.threads; ++tid) {
         auto *tk = &keys[tid];
         wg.emplace_back([&] {
@@ -147,7 +170,7 @@ int main(int argc, char *argv[]) {
             if (args.mode == "insert") {
                 for (auto &key: *tk) {
                     auto *kv = db->BeginTransaction(wopt);
-                    kv->Put(key, val);
+                    kv->Put(handle, key, val);
                     kv->Commit();
                     delete kv;
                 }
@@ -155,7 +178,7 @@ int main(int argc, char *argv[]) {
             } else if (args.mode == "get") {
                 for (auto &key: *tk) {
                     auto *kv = db->BeginTransaction(wopt);
-                    kv->Get(ropt, key, &rval);
+                    kv->Get(ropt, handle, key, &rval);
                     kv->Commit();
                     delete kv;
                 }
@@ -164,9 +187,9 @@ int main(int argc, char *argv[]) {
                     auto is_insert = dist(gen) < args.insert_ratio;
                     auto *kv = db->BeginTransaction(wopt);
                     if (is_insert) {
-                        kv->Put(key, val);
+                        kv->Put(handle, key, val);
                     } else {
-                        kv->Get(ropt, key, &rval); // not found
+                        kv->Get(ropt, handle, key, &rval); // not found
                     }
                     kv->Commit();
                     delete kv;
@@ -184,9 +207,10 @@ int main(int argc, char *argv[]) {
             return args.insert_ratio;
         return args.mode == "insert" ? 100 : 0;
     }();
-    double ops = static_cast<double>(total_op.load(std::memory_order_relaxed)) / b.elapse_sec();
-    fmt::println("{},{},{},{},{},{:.2f},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, ops,
-                 b.elapse_ms());
+    uint64_t ops = total_op.load(std::memory_order_relaxed) / b.elapse_sec();
+    fmt::println("{},{},{},{},{},{},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, (uint64_t) ops,
+                 (uint64_t) b.elapse_ms());
+    delete handle;
     delete db;
     std::filesystem::remove_all(args.path);
 }
