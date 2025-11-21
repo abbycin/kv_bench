@@ -5,8 +5,12 @@ import sys
 
 def real_mode(m):
     if m == "mixed":
-        return "MIXED (70% Get, 30% Insert)"
-    return m.upper()
+        return "Mixed (70% Get, 30% Insert)"
+    elif m == "get":
+        return "Random Get"
+    elif m == "scan":
+        return "Sequential Scan"
+    return m.capitalize()
 
 name = sys.argv[1]
 prefix = name.split(".")[0]

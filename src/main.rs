@@ -49,7 +49,7 @@ struct Args {
 fn main() {
     #[cfg(target_os = "linux")]
     {
-        Logger::init().add_file("/Data/x.log", true);
+        Logger::init().add_file("/tmp/x.log", true);
         log::set_max_level(log::LevelFilter::Info);
     }
     let args = Args::parse();
@@ -81,7 +81,7 @@ fn main() {
     opt.sync_on_write = false;
     opt.over_provision = true; // large value will use lots of memeory
     opt.inline_size = args.blob_size;
-    opt.tmp_store = args.mode != "get";
+    opt.tmp_store = args.mode != "get" && args.mode != "scan";
     let mut saved = opt.clone();
     saved.tmp_store = false;
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
@@ -96,13 +96,13 @@ fn main() {
             key.resize(args.key_size, b'x');
             tk.push(key);
         }
-        if args.random {
+        if args.random || args.mode == "get" {
             tk.shuffle(&mut rng);
         }
         keys.push(tk);
     }
 
-    if args.mode == "get" {
+    if args.mode == "get" || args.mode == "scan" {
         let pre_tx = db.begin().unwrap();
         (0..args.threads).for_each(|tid| {
             for i in 0..args.iterations {
@@ -130,6 +130,7 @@ fn main() {
             let insert_ratio = args.insert_ratio;
             let st = start_time.clone();
             let val = value.clone();
+            let prefix = format!("key_{tid}");
 
             std::thread::spawn(move || {
                 // coreid::bind_core(tid);
@@ -167,6 +168,13 @@ fn main() {
                                 let tx = db.view().unwrap();
                                 let _ = tx.get(key); // not found
                             }
+                        }
+                    }
+                    "scan" => {
+                        let view = db.view().unwrap();
+                        let iter = view.seek(prefix);
+                        for x in iter {
+                            std::hint::black_box(x);
                         }
                     }
                     _ => panic!("Invalid mode"),

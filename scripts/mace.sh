@@ -32,6 +32,12 @@ function samples() {
                                 echo "mixed threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
                                 exit 1
                         fi
+                        ./target/release/kv_bench --path /home/abby/mace_bench --threads $i --iterations $cnt --mode scan --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --insert-ratio 30
+                        if test $? -ne 0
+                        then
+                                echo "mixed threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
+                                exit 1
+                        fi
                 done
         done
 }

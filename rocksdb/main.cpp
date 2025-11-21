@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
+#include <fmt/base.h>
 #include <fmt/format.h>
 #include <memory>
 #include <random>
@@ -44,7 +46,7 @@ int main(int argc, char *argv[]) {
             .path = "/tmp/rocksdb_tmp",
     };
 
-    app.add_option("-m,--mode", args.mode, "Mode: insert, get, mixed");
+    app.add_option("-m,--mode", args.mode, "Mode: insert, get, mixed, scan");
     app.add_option("-t,--threads", args.threads, "Threads");
     app.add_option("-k,--key-size", args.key_size, "Key Size");
     app.add_option("-v,--value-size", args.value_size, "Value Size");
@@ -65,7 +67,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (args.mode != "insert" && args.mode != "get" && args.mode != "mixed") {
+    if (args.mode != "insert" && args.mode != "get" && args.mode != "mixed" && args.mode != "scan") {
         fmt::println("Error: Invalid mode");
         return 1;
     }
@@ -102,7 +104,6 @@ int main(int argc, char *argv[]) {
     options.enable_pipelined_write = true;
     options.env->SetBackgroundThreads(4, rocksdb::Env::Priority::HIGH);
 
-    auto ropt = rocksdb::ReadOptions();
     auto wopt = rocksdb::WriteOptions();
     wopt.no_slowdown = true;
     // wopt.disableWAL = true;
@@ -130,15 +131,16 @@ int main(int argc, char *argv[]) {
             tmp.resize(args.key_size, 'x');
             key.emplace_back(std::move(tmp));
         }
-        if (args.random) {
+        if (args.mode == "get" || args.random) {
             std::shuffle(keys.begin(), keys.end(), gen);
         }
         keys.emplace_back(std::move(key));
     }
 
+
     auto *handle = handles[0];
 
-    if (args.mode == "get") {
+    if (args.mode == "get" || args.mode == "scan") {
         auto *kv = db->BeginTransaction(wopt);
         for (size_t tid = 0; tid < args.threads; ++tid) {
             auto *tk = &keys[tid];
@@ -159,8 +161,11 @@ int main(int argc, char *argv[]) {
     handle = handles[0];
     for (size_t tid = 0; tid < args.threads; ++tid) {
         auto *tk = &keys[tid];
-        wg.emplace_back([&] {
+        wg.emplace_back([&, tid] {
             std::string rval(args.value_size, '0');
+            auto prefix = std::format("key_{}", tid);
+            auto ropt = rocksdb::ReadOptions();
+
             barrier.arrive_and_wait();
             if (mtx.try_lock()) {
                 b = nm::Instant::now();
@@ -194,6 +199,13 @@ int main(int argc, char *argv[]) {
                     kv->Commit();
                     delete kv;
                 }
+            } else if (args.mode == "scan") {
+                auto *iter = db->NewIterator(ropt);
+                iter->Seek(prefix);
+                while (iter->Valid()) {
+                    iter->Next();
+                }
+                delete iter;
             }
             total_op.fetch_add(args.iterations, std::memory_order::relaxed);
         });
