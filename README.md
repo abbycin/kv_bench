@@ -1,4 +1,4 @@
-# mace 0.0.17
+# mace 0.0.19
 
 ## insert performance
 ![mace_insert](./scripts/mace_insert.png)
