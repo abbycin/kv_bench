@@ -1,13 +1,13 @@
 # mace 0.0.19
 
-## insert performance
+## insert performance (sequential)
 ![mace_insert](./scripts/mace_insert.png)
 
 ![rocksdb_insert](./scripts/rocksdb_insert.png)
 
 ---
 
-## random get performance (cold get)
+## random get performance (warm get)
 
 ![mace_get](./scripts/mace_get.png)
 
@@ -21,7 +21,7 @@
 
 ![rockdb_mixed](./scripts/rocksdb_mixed.png)
 
-# sequential scan perfomance (cold scan)
+# sequential scan perfomance (warm scan)
 
 ![mace_scan](./scripts/mace_scan.png)
 
