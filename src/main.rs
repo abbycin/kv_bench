@@ -89,9 +89,10 @@ fn main() {
 
     let mut rng = rand::rng();
     let value = Arc::new(vec![b'0'; args.value_size]);
+    let keys_per_thread = args.iterations / args.threads;
     for tid in 0..args.threads {
-        let mut tk = Vec::with_capacity(args.iterations);
-        for i in 0..args.iterations {
+        let mut tk = Vec::with_capacity(keys_per_thread);
+        for i in 0..keys_per_thread {
             let mut key = format!("key_{tid}_{i}").into_bytes();
             key.resize(args.key_size, b'x');
             tk.push(key);
@@ -105,8 +106,8 @@ fn main() {
     if args.mode == "get" || args.mode == "scan" {
         let pre_tx = db.begin().unwrap();
         (0..args.threads).for_each(|tid| {
-            for i in 0..args.iterations {
-                pre_tx.put(&keys[tid][i], &*value).unwrap();
+            for k in &keys[tid] {
+                pre_tx.put(k, &*value).unwrap();
             }
         });
         pre_tx.commit().unwrap();
@@ -114,6 +115,15 @@ fn main() {
         // re-open db
         saved.tmp_store = true;
         db = Mace::new(saved.validate().unwrap()).unwrap();
+
+        // simulate common use cases
+        for i in 0..keys_per_thread {
+            let tid = rng.random_range(0..args.threads);
+            let mut k = format!("key_{tid}_{i}").into_bytes();
+            k.resize(args.key_size, b'x');
+            let view = db.view().unwrap();
+            view.get(&k).unwrap();
+        }
     }
 
     let barrier = Arc::new(std::sync::Barrier::new(args.threads));
@@ -134,6 +144,7 @@ fn main() {
 
             std::thread::spawn(move || {
                 // coreid::bind_core(tid);
+                let mut round = 0;
                 barrier.wait();
 
                 {
@@ -141,10 +152,10 @@ fn main() {
                         *guard = Instant::now();
                     }
                 }
-
                 match mode.as_str() {
                     "insert" => {
                         for key in tk {
+                            round += 1;
                             let tx = db.begin().unwrap();
                             tx.put(key.as_slice(), val.as_slice()).unwrap();
                             tx.commit().unwrap();
@@ -152,13 +163,16 @@ fn main() {
                     }
                     "get" => {
                         for key in tk {
+                            round += 1;
                             let tx = db.view().unwrap();
-                            tx.get(key).unwrap();
+                            let x = tx.get(key).unwrap();
+                            std::hint::black_box(x);
                         }
                     }
                     "mixed" => {
                         for key in tk {
                             let is_insert = rand::random_range(0..100) < insert_ratio;
+                            round += 1;
 
                             if is_insert {
                                 let tx = db.begin().unwrap();
@@ -166,7 +180,8 @@ fn main() {
                                 tx.commit().unwrap();
                             } else {
                                 let tx = db.view().unwrap();
-                                let _ = tx.get(key); // not found
+                                let x = tx.get(key); // not found
+                                let _ = std::hint::black_box(x);
                             }
                         }
                     }
@@ -174,13 +189,14 @@ fn main() {
                         let view = db.view().unwrap();
                         let iter = view.seek(prefix);
                         for x in iter {
+                            round += 1;
                             std::hint::black_box(x);
                         }
                     }
                     _ => panic!("Invalid mode"),
                 }
 
-                total_ops.fetch_add(args.iterations, std::sync::atomic::Ordering::Relaxed);
+                total_ops.fetch_add(round, std::sync::atomic::Ordering::Relaxed);
             })
         })
         .collect();
@@ -194,16 +210,6 @@ fn main() {
     let total = total_ops.load(std::sync::atomic::Ordering::Relaxed);
     let ops = (total as f64 / duration.as_secs_f64()) as usize;
 
-    // println!("{:<20} {}", "Test Mode:", args.mode);
-    // println!("{:<20} {}", "Threads:", args.threads);
-    // println!("{:<20} {}", "Iterations", args.iterations);
-    // println!("{:<20} {}B", "Key Size:", args.key_size);
-    // println!("{:<20} {}B", "Value Size:", args.value_size);
-    // println!("{:<20} {ops}", "Total Ops:");
-    // if args.mode == "mixed" {
-    //     println!("{:<20} {}%", "Insert Ratio:", args.insert_ratio);
-    // }
-
     let ratio = if args.mode == "mixed" {
         args.insert_ratio
     } else if args.mode == "insert" {
@@ -211,9 +217,8 @@ fn main() {
     } else {
         0
     };
-    // eprintln!("mode,threads,key_size,value_size,insert_ratio,ops");
     eprintln!(
-        "{},{},{},{},{},{:.2},{}",
+        "{},{},{},{},{},{},{}",
         args.mode,
         args.threads,
         args.key_size,
