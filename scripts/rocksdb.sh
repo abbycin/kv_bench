@@ -13,6 +13,7 @@ cmake --build --preset release 1>/dev/null 2>/dev/null
 
 function samples() {
         kv_sz=(16 16 100 1024 1024 1024 16 10240)
+        mode=(insert get mixed scan)
         # set -x
         db_root=$1
         cnt=100000
@@ -20,30 +21,15 @@ function samples() {
         do
                 for ((j = 0; j < ${#kv_sz[@]}; j += 2))
                 do
-                        ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode insert --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]}
-                        if test $? -ne 0
-                        then
-                                echo "insert threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
-                                exit 1
-                        fi
-                        ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode get --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]}
-                        if test $? -ne 0
-                        then
-                                echo "get threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
-                                exit 1
-                        fi
-                        ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode mixed --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --insert-ratio 30
-                        if test $? -ne 0
-                        then
-                                echo "mixed threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
-                                exit 1
-                        fi
-                        ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode scan --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --insert-ratio 30
-                        if test $? -ne 0
-                        then
-                                echo "mixed threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
-                                exit 1
-                        fi
+                        for ((k = 0; k < ${#mode[@]}; k += 1))
+                        do
+                            ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode ${mode[k]} --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]}
+                            if test $? -ne 0
+                            then
+                                    echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
+                                    exit 1
+                            fi
+                        done
                 done
         done
 }

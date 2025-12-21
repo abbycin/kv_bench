@@ -111,6 +111,10 @@ int main(int argc, char *argv[]) {
     rocksdb::ColumnFamilyOptions cfo{};
     cfo.enable_blob_files = true;
     cfo.min_blob_size = args.blob_size;
+    // rocksdb::BlockBasedTableOptions top{};
+    // top.use_delta_encoding = false;
+    // cfo.table_factory.reset(rocksdb::NewBlockBasedTableFactory(top));
+
     // use 1GB block cache
     auto cache = rocksdb::NewLRUCache(1 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
@@ -250,6 +254,7 @@ int main(int argc, char *argv[]) {
                     delete kv;
                 }
             } else if (args.mode == "scan") {
+                // ropt.pin_data = true;
                 auto *iter = db->NewIterator(ropt);
                 iter->Seek(prefix);
                 size_t n = 0;
