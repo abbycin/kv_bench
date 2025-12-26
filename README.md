@@ -1,4 +1,4 @@
-# mace 0.0.21
+# mace 0.0.22 vs rocksdb 10.4.2
 
 ## insert performance (sequential)
 ![mace_insert](./scripts/mace_insert.png)
