@@ -282,6 +282,13 @@ int main(int argc, char *argv[]) {
         return args.mode == "insert" ? 100 : 0;
     }();
     uint64_t ops = total_op.load(std::memory_order_relaxed) / b.elapse_sec();
+    if (args.mode == "insert") {
+        if (args.random) {
+            args.mode = "random_insert";
+        } else {
+            args.mode = "sequential_insert";
+        }
+    }
     fmt::println("{},{},{},{},{},{},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, (uint64_t) ops,
                  (uint64_t) b.elapse_ms());
     db->ReleaseSnapshot(snapshot);

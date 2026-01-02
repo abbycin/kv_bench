@@ -52,7 +52,7 @@ fn main() {
         Logger::init().add_file("/tmp/x.log", true);
         log::set_max_level(log::LevelFilter::Info);
     }
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     let path = Path::new(&args.path);
 
@@ -217,6 +217,13 @@ fn main() {
     } else {
         0
     };
+    if args.mode == "insert" {
+        if args.random {
+            args.mode = "random_insert".into();
+        } else {
+            args.mode = "sequential_insert".into();
+        }
+    }
     eprintln!(
         "{},{},{},{},{},{},{}",
         args.mode,

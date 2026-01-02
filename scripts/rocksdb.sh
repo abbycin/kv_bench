@@ -23,13 +23,22 @@ function samples() {
                 do
                         for ((k = 0; k < ${#mode[@]}; k += 1))
                         do
+                            if [ "${mode[k]}" == "insert" ]
+                            then
+                                ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode ${mode[k]} --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --random 1
+                                if test $? -ne 0
+                                then
+                                        echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} random fail"
+                                        exit 1
+                                fi
+                            fi
                             ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode ${mode[k]} --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]}
                             if test $? -ne 0
                             then
                                     echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
                                     exit 1
                             fi
-                        done
+                      done
                 done
         done
 }

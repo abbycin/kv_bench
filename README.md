@@ -1,13 +1,18 @@
-# mace 0.0.22 vs rocksdb 10.4.2
+# mace 0.0.23 vs rocksdb 10.4.2
 
-## insert performance (sequential)
-![mace_insert](./scripts/mace_insert.png)
+## sequential insert
+![mace__sequential_insert](./scripts/mace_sequential_insert.png)
 
-![rocksdb_insert](./scripts/rocksdb_insert.png)
+![rocksdb_sequential_insert](./scripts/rocksdb_sequential_insert.png)
+
+## random insert
+![mace_random_insert](./scripts/mace_random_insert.png)
+
+![rocksdb_random_insert](./scripts/rocksdb_random_insert.png)
 
 ---
 
-## random get performance (warm get)
+## random get (warm get)
 
 ![mace_get](./scripts/mace_get.png)
 
@@ -21,7 +26,7 @@
 
 ![rockdb_mixed](./scripts/rocksdb_mixed.png)
 
-# sequential scan perfomance (warm scan)
+# sequential scan (warm scan)
 
 ![mace_scan](./scripts/mace_scan.png)
 
