@@ -115,8 +115,8 @@ int main(int argc, char *argv[]) {
     // top.use_delta_encoding = false;
     // cfo.table_factory.reset(rocksdb::NewBlockBasedTableFactory(top));
 
-    // use 1GB block cache
-    auto cache = rocksdb::NewLRUCache(1 << 30);
+    // use 3GB block cache
+    auto cache = rocksdb::NewLRUCache(3 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
     table_options.block_cache = cache;
     cfo.table_factory.reset(NewBlockBasedTableFactory(table_options));

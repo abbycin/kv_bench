@@ -1,7 +1,9 @@
-# mace 0.0.23 vs rocksdb 10.4.2
+# mace 0.0.24 vs rocksdb 10.4.2
+
+**mace 0.0.24 traded a slight dip in query performance for a 10+% boost in insertion performance.**
 
 ## sequential insert
-![mace__sequential_insert](./scripts/mace_sequential_insert.png)
+![mace_sequential_insert](./scripts/mace_sequential_insert.png)
 
 ![rocksdb_sequential_insert](./scripts/rocksdb_sequential_insert.png)
 

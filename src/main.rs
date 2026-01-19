@@ -82,6 +82,7 @@ fn main() {
     opt.over_provision = true; // large value will use lots of memeory
     opt.inline_size = args.blob_size;
     opt.tmp_store = args.mode != "get" && args.mode != "scan";
+    opt.cache_capacity = 3 << 30;
     let mut saved = opt.clone();
     saved.tmp_store = false;
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
