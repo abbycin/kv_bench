@@ -66,6 +66,16 @@ fn main() {
         exit(1);
     }
 
+    if args.threads == 0 {
+        eprintln!("Error: threads must be greater than 0");
+        exit(1);
+    }
+
+    if !matches!(args.mode.as_str(), "insert" | "get" | "mixed" | "scan") {
+        eprintln!("Error: Invalid mode");
+        exit(1);
+    }
+
     if args.key_size < 16 || args.value_size < 16 {
         eprintln!("Error: key_size or value_size too small, must >= 16");
         exit(1);
@@ -87,13 +97,17 @@ fn main() {
     saved.tmp_store = false;
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
     db.disable_gc();
+    let mut bkt = db.new_bucket("default").unwrap();
 
     let mut rng = rand::rng();
     let value = Arc::new(vec![b'0'; args.value_size]);
-    let keys_per_thread = args.iterations / args.threads;
+    let mut key_counts = vec![args.iterations / args.threads; args.threads];
+    for cnt in key_counts.iter_mut().take(args.iterations % args.threads) {
+        *cnt += 1;
+    }
     for tid in 0..args.threads {
-        let mut tk = Vec::with_capacity(keys_per_thread);
-        for i in 0..keys_per_thread {
+        let mut tk = Vec::with_capacity(key_counts[tid]);
+        for i in 0..key_counts[tid] {
             let mut key = format!("key_{tid}_{i}").into_bytes();
             key.resize(args.key_size, b'x');
             tk.push(key);
@@ -105,54 +119,52 @@ fn main() {
     }
 
     if args.mode == "get" || args.mode == "scan" {
-        let pre_tx = db.begin().unwrap();
+        let pre_tx = bkt.begin().unwrap();
         (0..args.threads).for_each(|tid| {
             for k in &keys[tid] {
                 pre_tx.put(k, &*value).unwrap();
             }
         });
         pre_tx.commit().unwrap();
+        drop(bkt);
         drop(db);
         // re-open db
         saved.tmp_store = true;
         db = Mace::new(saved.validate().unwrap()).unwrap();
+        bkt = db.get_bucket("default").unwrap();
 
         // simulate common use cases
-        for i in 0..keys_per_thread {
+        for _ in 0..args.iterations {
             let tid = rng.random_range(0..args.threads);
-            let mut k = format!("key_{tid}_{i}").into_bytes();
-            k.resize(args.key_size, b'x');
-            let view = db.view().unwrap();
-            view.get(&k).unwrap();
+            let Some(k) = keys[tid].choose(&mut rng) else {
+                continue;
+            };
+            let view = bkt.view().unwrap();
+            view.get(k).unwrap();
         }
     }
 
-    let barrier = Arc::new(std::sync::Barrier::new(args.threads));
+    let ready_barrier = Arc::new(std::sync::Barrier::new(args.threads + 1));
+    let start_barrier = Arc::new(std::sync::Barrier::new(args.threads + 1));
     let total_ops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let start_time = Arc::new(std::sync::Mutex::new(Instant::now()));
 
     let h: Vec<JoinHandle<()>> = (0..args.threads)
         .map(|tid| {
-            let db = db.clone();
+            let db = bkt.clone();
             let tk: &Vec<Vec<u8>> = unsafe { std::mem::transmute(&keys[tid]) };
             let total_ops = total_ops.clone();
-            let barrier = Arc::clone(&barrier);
+            let ready_barrier = Arc::clone(&ready_barrier);
+            let start_barrier = Arc::clone(&start_barrier);
             let mode = args.mode.clone();
             let insert_ratio = args.insert_ratio;
-            let st = start_time.clone();
             let val = value.clone();
-            let prefix = format!("key_{tid}");
+            let prefix = format!("key_{tid}_");
 
             std::thread::spawn(move || {
-                // coreid::bind_core(tid);
+                coreid::bind_core(tid);
                 let mut round = 0;
-                barrier.wait();
-
-                {
-                    if let Ok(mut guard) = st.try_lock() {
-                        *guard = Instant::now();
-                    }
-                }
+                ready_barrier.wait();
+                start_barrier.wait();
                 match mode.as_str() {
                     "insert" => {
                         for key in tk {
@@ -202,12 +214,15 @@ fn main() {
         })
         .collect();
 
+    ready_barrier.wait();
+    let start_time = Instant::now();
+    start_barrier.wait();
+
     for x in h {
         x.join().unwrap();
     }
 
-    let test_start = start_time.lock().unwrap();
-    let duration = test_start.elapsed();
+    let duration = start_time.elapsed();
     let total = total_ops.load(std::sync::atomic::Ordering::Relaxed);
     let ops = (total as f64 / duration.as_secs_f64()) as usize;
 

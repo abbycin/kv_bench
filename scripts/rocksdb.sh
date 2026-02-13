@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 if [ "$#" -ne 1 ]
 then
   printf "\033[m$0 path\033[0m\n"
   exit 1
 fi
 
-pushd .
-cd ../rocksdb
-cmake --preset release 1>/dev/null 2>/dev/null
-cmake --build --preset release 1>/dev/null 2>/dev/null
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd -- "${script_dir}/.." && pwd)"
+rocksdb_dir="${root_dir}/rocksdb"
+
+(cd "${rocksdb_dir}" && cmake --preset release 1>/dev/null 2>/dev/null)
+(cd "${rocksdb_dir}" && cmake --build --preset release 1>/dev/null 2>/dev/null)
 
 function samples() {
         kv_sz=(16 16 100 1024 1024 1024 16 10240)
         mode=(insert get mixed scan)
         # set -x
-        db_root=$1
+        db_root="$1"
         cnt=100000
         for ((i = 1; i <= $(nproc); i *= 2))
         do
@@ -25,14 +29,14 @@ function samples() {
                         do
                             if [ "${mode[k]}" == "insert" ]
                             then
-                                ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode ${mode[k]} --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]} --random 1
+                                "${rocksdb_dir}/build/release/rocksdb_bench" --path "${db_root}" --threads "${i}" --iterations "${cnt}" --mode "${mode[k]}" --key-size "${kv_sz[j]}" --value-size "${kv_sz[j+1]}" --random
                                 if test $? -ne 0
                                 then
                                         echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} random fail"
                                         exit 1
                                 fi
                             fi
-                            ./build/release/rocksdb_bench --path $db_root --threads $i --iterations $cnt --mode ${mode[k]} --key-size ${kv_sz[j]} --value-size ${kv_sz[j+1]}
+                            "${rocksdb_dir}/build/release/rocksdb_bench" --path "${db_root}" --threads "${i}" --iterations "${cnt}" --mode "${mode[k]}" --key-size "${kv_sz[j]}" --value-size "${kv_sz[j+1]}"
                             if test $? -ne 0
                             then
                                     echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
@@ -43,7 +47,10 @@ function samples() {
         done
 }
 
-echo mode,threads,key_size,value_size,insert_ratio,ops,elapsed > ../scripts/rocksdb.csv
-samples $1 1>> ../scripts/rocksdb.csv
-popd
-./bin/python plot.py rocksdb.csv
+echo mode,threads,key_size,value_size,insert_ratio,ops,elapsed > "${script_dir}/rocksdb.csv"
+samples "$1" 1>> "${script_dir}/rocksdb.csv"
+if [ -x "${script_dir}/bin/python" ]; then
+    (cd "${script_dir}" && "${script_dir}/bin/python" plot.py rocksdb.csv)
+else
+    (cd "${script_dir}" && python3 plot.py rocksdb.csv)
+fi

@@ -22,12 +22,29 @@
 #include <format>
 #include <string>
 
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+
 #include "CLI/CLI.hpp"
 #include "instant.h"
 
 template<class T>
 static void black_box(const T &t) {
     asm volatile("" ::"m"(t) : "memory");
+}
+
+static size_t cores_online() {
+    auto n = ::sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? static_cast<size_t>(n) : 1;
+}
+
+static void bind_core(size_t tid) {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    auto core = static_cast<int>(tid % cores_online());
+    CPU_SET(core, &set);
+    (void) pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
 }
 
 struct Args {
@@ -59,11 +76,11 @@ int main(int argc, char *argv[]) {
     app.add_option("-t,--threads", args.threads, "Threads");
     app.add_option("-k,--key-size", args.key_size, "Key Size");
     app.add_option("-v,--value-size", args.value_size, "Value Size");
-    app.add_option("-b,--blob-size", args.value_size, "Blob Size");
+    app.add_option("-b,--blob-size", args.blob_size, "Blob Size");
     app.add_option("-i,--iterations", args.iterations, "Iterations");
     app.add_option("-r,--insert-ratio", args.insert_ratio, "Insert Ratio for mixed mode");
     app.add_option("-p,--path", args.path, "DataBase Home");
-    app.add_option("--random", args.random, "Shuffle insert keys");
+    app.add_flag("--random", args.random, "Shuffle insert keys");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -74,6 +91,11 @@ int main(int argc, char *argv[]) {
 
     if (std::filesystem::exists(args.path)) {
         fmt::println("path `{}` already exists", args.path);
+        return 1;
+    }
+
+    if (args.threads == 0) {
+        fmt::println("Error: threads must be greater than 0");
         return 1;
     }
 
@@ -142,27 +164,31 @@ int main(int argc, char *argv[]) {
     std::atomic<uint64_t> total_op{0};
     rocksdb::OptimisticTransactionDB *db;
     auto b = nm::Instant::now();
-    std::mutex mtx{};
     std::vector<rocksdb::ColumnFamilyHandle *> handles{};
     auto s = rocksdb::OptimisticTransactionDB::Open(options, args.path, cfd, &handles, &db);
     assert(s.ok());
-    std::barrier barrier{static_cast<ptrdiff_t>(args.threads)};
+    std::barrier ready_barrier{static_cast<ptrdiff_t>(args.threads + 1)};
+    std::barrier start_barrier{static_cast<ptrdiff_t>(args.threads + 1)};
 
     std::random_device rd{};
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> dist(0, 100);
 
     std::string val(args.value_size, 'x');
-    auto keys_per_thread = args.iterations / args.threads;
+    std::vector<size_t> key_counts(args.threads, args.iterations / args.threads);
+    for (size_t i = 0; i < args.iterations % args.threads; ++i) {
+        key_counts[i] += 1;
+    }
+    keys.reserve(args.threads);
     for (size_t tid = 0; tid < args.threads; ++tid) {
         std::vector<std::string> key{};
-        for (size_t i = 0; i < keys_per_thread; ++i) {
+        key.reserve(key_counts[tid]);
+        for (size_t i = 0; i < key_counts[tid]; ++i) {
             auto tmp = std::format("key_{}_{}", tid, i);
             tmp.resize(args.key_size, 'x');
             key.emplace_back(std::move(tmp));
         }
         if (args.mode == "get" || args.random) {
-            std::shuffle(keys.begin(), keys.end(), gen);
+            std::shuffle(key.begin(), key.end(), gen);
         }
         keys.emplace_back(std::move(key));
     }
@@ -189,11 +215,14 @@ int main(int argc, char *argv[]) {
         handle = handles[0];
 
         // simulate common use cases
-        std::uniform_int_distribution<int> dist(0, args.threads - 1);
-        for (size_t i = 0; i < keys_per_thread; ++i) {
-            auto tid = dist(gen);
-            auto k = std::format("key_{}_{}", tid, i);
-            k.resize(args.key_size, 'x');
+        std::uniform_int_distribution<size_t> tid_dist(0, args.threads - 1);
+        for (size_t i = 0; i < args.iterations; ++i) {
+            auto tid = tid_dist(gen);
+            if (keys[tid].empty()) {
+                continue;
+            }
+            std::uniform_int_distribution<size_t> key_dist(0, keys[tid].size() - 1);
+            const auto &k = keys[tid][key_dist(gen)];
             auto s = db->Get(rocksdb::ReadOptions(), k, &val);
             if (!s.ok()) {
                 std::terminate();
@@ -202,10 +231,12 @@ int main(int argc, char *argv[]) {
     }
 
     auto *snapshot = db->GetSnapshot();
+    auto base_seed = rd();
     for (size_t tid = 0; tid < args.threads; ++tid) {
         wg.emplace_back([&, tid] {
+            bind_core(tid);
             std::string rval(args.value_size, '0');
-            auto prefix = std::format("key_{}", tid);
+            auto prefix = std::format("key_{}_", tid);
             auto ropt = rocksdb::ReadOptions();
             auto upper_bound = find_upper_bound(prefix);
             auto upper_bound_slice = rocksdb::Slice(upper_bound);
@@ -216,12 +247,11 @@ int main(int argc, char *argv[]) {
             ropt.prefix_same_as_start = true;
             ropt.snapshot = snapshot;
             size_t round = 0;
+            std::mt19937 mixed_gen(static_cast<uint32_t>(base_seed) ^ static_cast<uint32_t>(0x9e3779b9U * (tid + 1)));
+            std::uniform_int_distribution<int> mixed_dist(0, 99);
 
-            barrier.arrive_and_wait();
-            if (mtx.try_lock()) {
-                b = nm::Instant::now();
-                mtx.unlock();
-            }
+            ready_barrier.arrive_and_wait();
+            start_barrier.arrive_and_wait();
 
             if (args.mode == "insert") {
                 for (auto &key: *tk) {
@@ -243,7 +273,7 @@ int main(int argc, char *argv[]) {
             } else if (args.mode == "mixed") {
                 for (auto &key: *tk) {
                     round += 1;
-                    auto is_insert = dist(gen) < args.insert_ratio;
+                    auto is_insert = mixed_dist(mixed_gen) < static_cast<int>(args.insert_ratio);
                     auto *kv = db->BeginTransaction(wopt);
                     if (is_insert) {
                         kv->Put(handle, key, val);
@@ -272,6 +302,10 @@ int main(int argc, char *argv[]) {
             total_op.fetch_add(round, std::memory_order::relaxed);
         });
     }
+
+    ready_barrier.arrive_and_wait();
+    b = nm::Instant::now();
+    start_barrier.arrive_and_wait();
 
     for (auto &w: wg) {
         w.join();
