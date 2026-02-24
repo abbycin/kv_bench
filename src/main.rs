@@ -52,7 +52,7 @@ fn main() {
         Logger::init().add_file("/tmp/x.log", true);
         log::set_max_level(log::LevelFilter::Info);
     }
-    let mut args = Args::parse();
+    let args = Args::parse();
 
     let path = Path::new(&args.path);
 
@@ -86,62 +86,64 @@ fn main() {
         exit(1);
     }
 
-    let mut keys: Vec<Vec<Vec<u8>>> = Vec::with_capacity(args.threads);
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
-    opt.over_provision = true; // large value will use lots of memeory
+    opt.over_provision = false;
     opt.inline_size = args.blob_size;
     opt.tmp_store = args.mode != "get" && args.mode != "scan";
     opt.cache_capacity = 3 << 30;
+    opt.data_file_size = 64 << 20;
+    opt.max_log_size = 1 << 30;
     let mut saved = opt.clone();
     saved.tmp_store = false;
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
     db.disable_gc();
     let mut bkt = db.new_bucket("default").unwrap();
 
-    let mut rng = rand::rng();
     let value = Arc::new(vec![b'0'; args.value_size]);
-    let mut key_counts = vec![args.iterations / args.threads; args.threads];
-    for cnt in key_counts.iter_mut().take(args.iterations % args.threads) {
-        *cnt += 1;
-    }
-    for tid in 0..args.threads {
-        let mut tk = Vec::with_capacity(key_counts[tid]);
-        for i in 0..key_counts[tid] {
-            let mut key = format!("key_{tid}_{i}").into_bytes();
-            key.resize(args.key_size, b'x');
-            tk.push(key);
-        }
-        if args.random || args.mode == "get" {
-            tk.shuffle(&mut rng);
-        }
-        keys.push(tk);
-    }
 
     if args.mode == "get" || args.mode == "scan" {
         let pre_tx = bkt.begin().unwrap();
-        (0..args.threads).for_each(|tid| {
-            for k in &keys[tid] {
-                pre_tx.put(k, &*value).unwrap();
+        for tid in 0..args.threads {
+            let count = args.iterations / args.threads
+                + if tid < args.iterations % args.threads {
+                    1
+                } else {
+                    0
+                };
+            for i in 0..count {
+                let mut key = format!("key_{tid}_{i}").into_bytes();
+                key.resize(args.key_size, b'x');
+                pre_tx.put(&key, &*value).unwrap();
             }
-        });
+        }
         pre_tx.commit().unwrap();
         drop(bkt);
         drop(db);
-        // re-open db
         saved.tmp_store = true;
         db = Mace::new(saved.validate().unwrap()).unwrap();
         bkt = db.get_bucket("default").unwrap();
 
-        // simulate common use cases
+        let mut rng = rand::rng();
         for _ in 0..args.iterations {
             let tid = rng.random_range(0..args.threads);
-            let Some(k) = keys[tid].choose(&mut rng) else {
-                continue;
-            };
+            let count = args.iterations / args.threads
+                + if tid < args.iterations % args.threads {
+                    1
+                } else {
+                    0
+                };
+            let idx = rng.random_range(0..count);
+            let mut key = format!("key_{tid}_{idx}").into_bytes();
+            key.resize(args.key_size, b'x');
             let view = bkt.view().unwrap();
-            view.get(k).unwrap();
+            view.get(&key).unwrap();
         }
+    }
+
+    let mut key_counts = vec![args.iterations / args.threads; args.threads];
+    for cnt in key_counts.iter_mut().take(args.iterations % args.threads) {
+        *cnt += 1;
     }
 
     let ready_barrier = Arc::new(std::sync::Barrier::new(args.threads + 1));
@@ -151,13 +153,14 @@ fn main() {
     let h: Vec<JoinHandle<()>> = (0..args.threads)
         .map(|tid| {
             let db = bkt.clone();
-            let tk: &Vec<Vec<u8>> = unsafe { std::mem::transmute(&keys[tid]) };
             let total_ops = total_ops.clone();
             let ready_barrier = Arc::clone(&ready_barrier);
             let start_barrier = Arc::clone(&start_barrier);
             let mode = args.mode.clone();
             let insert_ratio = args.insert_ratio;
             let val = value.clone();
+            let key_count = key_counts[tid];
+            let key_size = args.key_size;
             let prefix = format!("key_{tid}_");
 
             std::thread::spawn(move || {
@@ -167,7 +170,9 @@ fn main() {
                 start_barrier.wait();
                 match mode.as_str() {
                     "insert" => {
-                        for key in tk {
+                        for i in 0..key_count {
+                            let mut key = format!("key_{tid}_{i}").into_bytes();
+                            key.resize(key_size, b'x');
                             round += 1;
                             let tx = db.begin().unwrap();
                             tx.put(key.as_slice(), val.as_slice()).unwrap();
@@ -175,7 +180,9 @@ fn main() {
                         }
                     }
                     "get" => {
-                        for key in tk {
+                        for i in 0..key_count {
+                            let mut key = format!("key_{tid}_{i}").into_bytes();
+                            key.resize(key_size, b'x');
                             round += 1;
                             let tx = db.view().unwrap();
                             let x = tx.get(key).unwrap();
@@ -183,7 +190,9 @@ fn main() {
                         }
                     }
                     "mixed" => {
-                        for key in tk {
+                        for i in 0..key_count {
+                            let mut key = format!("key_{tid}_{i}").into_bytes();
+                            key.resize(key_size, b'x');
                             let is_insert = rand::random_range(0..100) < insert_ratio;
                             round += 1;
 
@@ -193,7 +202,7 @@ fn main() {
                                 tx.commit().unwrap();
                             } else {
                                 let tx = db.view().unwrap();
-                                let x = tx.get(key); // not found
+                                let x = tx.get(key);
                                 let _ = std::hint::black_box(x);
                             }
                         }
@@ -233,16 +242,17 @@ fn main() {
     } else {
         0
     };
-    if args.mode == "insert" {
+    let mut mode = args.mode.clone();
+    if mode == "insert" {
         if args.random {
-            args.mode = "random_insert".into();
+            mode = "random_insert".into();
         } else {
-            args.mode = "sequential_insert".into();
+            mode = "sequential_insert".into();
         }
     }
     eprintln!(
         "{},{},{},{},{},{},{}",
-        args.mode,
+        mode,
         args.threads,
         args.key_size,
         args.value_size,

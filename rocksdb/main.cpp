@@ -133,19 +133,19 @@ int main(int argc, char *argv[]) {
     rocksdb::ColumnFamilyOptions cfo{};
     cfo.enable_blob_files = true;
     cfo.min_blob_size = args.blob_size;
-    // rocksdb::BlockBasedTableOptions top{};
-    // top.use_delta_encoding = false;
-    // cfo.table_factory.reset(rocksdb::NewBlockBasedTableFactory(top));
+    cfo.disable_auto_compactions = true;
+    cfo.max_compaction_bytes = (1ULL << 60);
+    cfo.level0_stop_writes_trigger = 100000;
+    cfo.level0_slowdown_writes_trigger = 100000;
+    cfo.level0_file_num_compaction_trigger = 100000;
+    cfo.write_buffer_size = 64 << 20;
+    cfo.max_write_buffer_number = 64;
 
     // use 3GB block cache
     auto cache = rocksdb::NewLRUCache(3 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
     table_options.block_cache = cache;
     cfo.table_factory.reset(NewBlockBasedTableFactory(table_options));
-    // the following three options makes it not trigger GC in test
-    cfo.level0_file_num_compaction_trigger = 10000;
-    cfo.write_buffer_size = 64 << 20;
-    cfo.max_write_buffer_number = 16;
 
     std::vector<rocksdb::ColumnFamilyDescriptor> cfd{};
     cfd.push_back(rocksdb::ColumnFamilyDescriptor("default", cfo));
@@ -160,7 +160,6 @@ int main(int argc, char *argv[]) {
     wopt.no_slowdown = true;
     // wopt.disableWAL = true;
     std::vector<std::thread> wg;
-    std::vector<std::vector<std::string>> keys{};
     std::atomic<uint64_t> total_op{0};
     rocksdb::OptimisticTransactionDB *db;
     auto b = nm::Instant::now();
@@ -174,32 +173,16 @@ int main(int argc, char *argv[]) {
     std::mt19937 gen(rd());
 
     std::string val(args.value_size, 'x');
-    std::vector<size_t> key_counts(args.threads, args.iterations / args.threads);
-    for (size_t i = 0; i < args.iterations % args.threads; ++i) {
-        key_counts[i] += 1;
-    }
-    keys.reserve(args.threads);
-    for (size_t tid = 0; tid < args.threads; ++tid) {
-        std::vector<std::string> key{};
-        key.reserve(key_counts[tid]);
-        for (size_t i = 0; i < key_counts[tid]; ++i) {
-            auto tmp = std::format("key_{}_{}", tid, i);
-            tmp.resize(args.key_size, 'x');
-            key.emplace_back(std::move(tmp));
-        }
-        if (args.mode == "get" || args.random) {
-            std::shuffle(key.begin(), key.end(), gen);
-        }
-        keys.emplace_back(std::move(key));
-    }
 
     auto *handle = handles[0];
 
     if (args.mode == "get" || args.mode == "scan") {
         auto *kv = db->BeginTransaction(wopt);
         for (size_t tid = 0; tid < args.threads; ++tid) {
-            auto *tk = &keys[tid];
-            for (auto &key: *tk) {
+            size_t count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
+            for (size_t i = 0; i < count; ++i) {
+                auto key = std::format("key_{}_{}", tid, i);
+                key.resize(args.key_size, 'x');
                 kv->Put(handle, key, val);
             }
         }
@@ -214,16 +197,15 @@ int main(int argc, char *argv[]) {
 
         handle = handles[0];
 
-        // simulate common use cases
         std::uniform_int_distribution<size_t> tid_dist(0, args.threads - 1);
         for (size_t i = 0; i < args.iterations; ++i) {
             auto tid = tid_dist(gen);
-            if (keys[tid].empty()) {
-                continue;
-            }
-            std::uniform_int_distribution<size_t> key_dist(0, keys[tid].size() - 1);
-            const auto &k = keys[tid][key_dist(gen)];
-            auto s = db->Get(rocksdb::ReadOptions(), k, &val);
+            size_t count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
+            std::uniform_int_distribution<size_t> key_dist(0, count - 1);
+            auto idx = key_dist(gen);
+            auto key = std::format("key_{}_{}", tid, idx);
+            key.resize(args.key_size, 'x');
+            auto s = db->Get(rocksdb::ReadOptions(), key, &val);
             if (!s.ok()) {
                 std::terminate();
             }
@@ -243,18 +225,21 @@ int main(int argc, char *argv[]) {
             if (!upper_bound.empty()) {
                 ropt.iterate_upper_bound = &upper_bound_slice;
             }
-            auto *tk = &keys[tid];
             ropt.prefix_same_as_start = true;
             ropt.snapshot = snapshot;
             size_t round = 0;
             std::mt19937 mixed_gen(static_cast<uint32_t>(base_seed) ^ static_cast<uint32_t>(0x9e3779b9U * (tid + 1)));
             std::uniform_int_distribution<int> mixed_dist(0, 99);
 
+            size_t key_count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
+
             ready_barrier.arrive_and_wait();
             start_barrier.arrive_and_wait();
 
             if (args.mode == "insert") {
-                for (auto &key: *tk) {
+                for (size_t i = 0; i < key_count; ++i) {
+                    auto key = std::format("key_{}_{}", tid, i);
+                    key.resize(args.key_size, 'x');
                     round += 1;
                     auto *kv = db->BeginTransaction(wopt);
                     kv->Put(handle, key, val);
@@ -263,7 +248,9 @@ int main(int argc, char *argv[]) {
                 }
 
             } else if (args.mode == "get") {
-                for (auto &key: *tk) {
+                for (size_t i = 0; i < key_count; ++i) {
+                    auto key = std::format("key_{}_{}", tid, i);
+                    key.resize(args.key_size, 'x');
                     round += 1;
                     auto *kv = db->BeginTransaction(wopt);
                     kv->Get(ropt, handle, key, &rval);
@@ -271,20 +258,21 @@ int main(int argc, char *argv[]) {
                     delete kv;
                 }
             } else if (args.mode == "mixed") {
-                for (auto &key: *tk) {
+                for (size_t i = 0; i < key_count; ++i) {
+                    auto key = std::format("key_{}_{}", tid, i);
+                    key.resize(args.key_size, 'x');
                     round += 1;
                     auto is_insert = mixed_dist(mixed_gen) < static_cast<int>(args.insert_ratio);
                     auto *kv = db->BeginTransaction(wopt);
                     if (is_insert) {
                         kv->Put(handle, key, val);
                     } else {
-                        kv->Get(ropt, handle, key, &rval); // not found
+                        kv->Get(ropt, handle, key, &rval);
                     }
                     kv->Commit();
                     delete kv;
                 }
             } else if (args.mode == "scan") {
-                // ropt.pin_data = true;
                 auto *iter = db->NewIterator(ropt);
                 iter->Seek(prefix);
                 size_t n = 0;
