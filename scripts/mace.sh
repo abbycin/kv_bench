@@ -48,7 +48,7 @@ function samples() {
 }
 
 echo mode,threads,key_size,value_size,insert_ratio,ops,elasped > "${script_dir}/mace.csv"
-samples "$1" 2>> "${script_dir}/mace.csv"
+samples "$1" 1>> "${script_dir}/mace.csv"
 if [ -x "${script_dir}/bin/python" ]; then
     (cd "${script_dir}" && "${script_dir}/bin/python" plot.py mace.csv)
 else

@@ -4,7 +4,6 @@ use logger::Logger;
 use mace::{Mace, Options};
 #[cfg(feature = "custom_alloc")]
 use myalloc::{MyAlloc, print_filtered_trace};
-use rand::prelude::*;
 use std::path::Path;
 use std::process::exit;
 use std::sync::Arc;
@@ -85,17 +84,17 @@ fn main() {
         eprintln!("Error: Insert ratio must be between 0 and 100");
         exit(1);
     }
-
     let mut opt = Options::new(path);
     opt.sync_on_write = false;
-    opt.over_provision = false;
     opt.inline_size = args.blob_size;
     opt.tmp_store = args.mode != "get" && args.mode != "scan";
     opt.cache_capacity = 3 << 30;
     opt.data_file_size = 64 << 20;
     opt.max_log_size = 1 << 30;
+    opt.default_arenas = 128;
     let mut saved = opt.clone();
-    saved.tmp_store = false;
+
+    saved.tmp_store = true;
     let mut db = Mace::new(opt.validate().unwrap()).unwrap();
     db.disable_gc();
     let mut bkt = db.new_bucket("default").unwrap();
@@ -103,42 +102,41 @@ fn main() {
     let value = Arc::new(vec![b'0'; args.value_size]);
 
     if args.mode == "get" || args.mode == "scan" {
-        let pre_tx = bkt.begin().unwrap();
+        let mut fill_handles = vec![];
         for tid in 0..args.threads {
-            let count = args.iterations / args.threads
+            let bkt_clone = bkt.clone();
+            let val_clone = value.clone();
+            let key_count = args.iterations / args.threads
                 + if tid < args.iterations % args.threads {
                     1
                 } else {
                     0
                 };
-            for i in 0..count {
-                let mut key = format!("key_{tid}_{i}").into_bytes();
-                key.resize(args.key_size, b'x');
-                pre_tx.put(&key, &*value).unwrap();
-            }
+            let key_size = args.key_size;
+            fill_handles.push(std::thread::spawn(move || {
+                coreid::bind_core(tid);
+                const BATCH_SIZE: usize = 10000;
+                for i in (0..key_count).step_by(BATCH_SIZE) {
+                    let tx = bkt_clone.begin().unwrap();
+                    for j in 0..BATCH_SIZE {
+                        if i + j >= key_count {
+                            break;
+                        }
+                        let mut key = format!("key_{tid}_{}", i + j).into_bytes();
+                        key.resize(key_size, b'x');
+                        tx.put(&key, &*val_clone).unwrap();
+                    }
+                    tx.commit().unwrap();
+                }
+            }));
         }
-        pre_tx.commit().unwrap();
+        for h in fill_handles {
+            h.join().unwrap();
+        }
         drop(bkt);
         drop(db);
-        saved.tmp_store = true;
         db = Mace::new(saved.validate().unwrap()).unwrap();
         bkt = db.get_bucket("default").unwrap();
-
-        let mut rng = rand::rng();
-        for _ in 0..args.iterations {
-            let tid = rng.random_range(0..args.threads);
-            let count = args.iterations / args.threads
-                + if tid < args.iterations % args.threads {
-                    1
-                } else {
-                    0
-                };
-            let idx = rng.random_range(0..count);
-            let mut key = format!("key_{tid}_{idx}").into_bytes();
-            key.resize(args.key_size, b'x');
-            let view = bkt.view().unwrap();
-            view.get(&key).unwrap();
-        }
     }
 
     let mut key_counts = vec![args.iterations / args.threads; args.threads];
@@ -162,15 +160,22 @@ fn main() {
             let key_count = key_counts[tid];
             let key_size = args.key_size;
             let prefix = format!("key_{tid}_");
+            let is_random = args.random;
 
             std::thread::spawn(move || {
                 coreid::bind_core(tid);
                 let mut round = 0;
+                let mut indices: Vec<usize> = (0..key_count).collect();
+                if is_random {
+                    use rand::seq::SliceRandom;
+                    indices.shuffle(&mut rand::rng());
+                }
+
                 ready_barrier.wait();
                 start_barrier.wait();
                 match mode.as_str() {
                     "insert" => {
-                        for i in 0..key_count {
+                        for i in indices {
                             let mut key = format!("key_{tid}_{i}").into_bytes();
                             key.resize(key_size, b'x');
                             round += 1;
@@ -180,7 +185,7 @@ fn main() {
                         }
                     }
                     "get" => {
-                        for i in 0..key_count {
+                        for i in indices {
                             let mut key = format!("key_{tid}_{i}").into_bytes();
                             key.resize(key_size, b'x');
                             round += 1;
@@ -190,7 +195,7 @@ fn main() {
                         }
                     }
                     "mixed" => {
-                        for i in 0..key_count {
+                        for i in indices {
                             let mut key = format!("key_{tid}_{i}").into_bytes();
                             key.resize(key_size, b'x');
                             let is_insert = rand::random_range(0..100) < insert_ratio;
@@ -250,7 +255,7 @@ fn main() {
             mode = "sequential_insert".into();
         }
     }
-    eprintln!(
+    println!(
         "{},{},{},{},{},{},{}",
         mode,
         args.threads,

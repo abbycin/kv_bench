@@ -135,11 +135,11 @@ int main(int argc, char *argv[]) {
     cfo.min_blob_size = args.blob_size;
     cfo.disable_auto_compactions = true;
     cfo.max_compaction_bytes = (1ULL << 60);
-    cfo.level0_stop_writes_trigger = 100000;
-    cfo.level0_slowdown_writes_trigger = 100000;
-    cfo.level0_file_num_compaction_trigger = 100000;
+    cfo.level0_stop_writes_trigger = 1000000;
+    cfo.level0_slowdown_writes_trigger = 1000000;
+    cfo.level0_file_num_compaction_trigger = 1000000;
     cfo.write_buffer_size = 64 << 20;
-    cfo.max_write_buffer_number = 64;
+    cfo.max_write_buffer_number = 128;
 
     // use 3GB block cache
     auto cache = rocksdb::NewLRUCache(3 << 30);
@@ -154,7 +154,8 @@ int main(int argc, char *argv[]) {
     options.create_if_missing = true;
     options.allow_concurrent_memtable_write = true;
     options.enable_pipelined_write = true;
-    options.env->SetBackgroundThreads(4, rocksdb::Env::Priority::HIGH);
+    options.max_background_flushes = 8;
+    options.env->SetBackgroundThreads(8, rocksdb::Env::Priority::HIGH);
 
     auto wopt = rocksdb::WriteOptions();
     wopt.no_slowdown = true;
@@ -177,42 +178,36 @@ int main(int argc, char *argv[]) {
     auto *handle = handles[0];
 
     if (args.mode == "get" || args.mode == "scan") {
-        auto *kv = db->BeginTransaction(wopt);
+        std::vector<std::thread> fill_threads;
         for (size_t tid = 0; tid < args.threads; ++tid) {
-            size_t count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
-            for (size_t i = 0; i < count; ++i) {
-                auto key = std::format("key_{}_{}", tid, i);
-                key.resize(args.key_size, 'x');
-                kv->Put(handle, key, val);
-            }
+            fill_threads.emplace_back([&, tid] {
+                bind_core(tid);
+                size_t count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
+                const size_t batch_size = 10000;
+                for (size_t i = 0; i < count; i += batch_size) {
+                    auto *kv = db->BeginTransaction(wopt);
+                    for (size_t j = 0; j < batch_size && (i + j) < count; ++j) {
+                        auto key = std::format("key_{}_{}", tid, i + j);
+                        key.resize(args.key_size, 'x');
+                        kv->Put(handle, key, val);
+                    }
+                    kv->Commit();
+                    delete kv;
+                }
+            });
         }
-        kv->Commit();
-        delete kv;
+        for (auto &t: fill_threads)
+            t.join();
+
         delete handle;
         delete db;
         handles.clear();
         // re-open db
         s = rocksdb::OptimisticTransactionDB::Open(options, args.path, cfd, &handles, &db);
         assert(s.ok());
-
         handle = handles[0];
-
-        std::uniform_int_distribution<size_t> tid_dist(0, args.threads - 1);
-        for (size_t i = 0; i < args.iterations; ++i) {
-            auto tid = tid_dist(gen);
-            size_t count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
-            std::uniform_int_distribution<size_t> key_dist(0, count - 1);
-            auto idx = key_dist(gen);
-            auto key = std::format("key_{}_{}", tid, idx);
-            key.resize(args.key_size, 'x');
-            auto s = db->Get(rocksdb::ReadOptions(), key, &val);
-            if (!s.ok()) {
-                std::terminate();
-            }
-        }
     }
 
-    auto *snapshot = db->GetSnapshot();
     auto base_seed = rd();
     for (size_t tid = 0; tid < args.threads; ++tid) {
         wg.emplace_back([&, tid] {
@@ -226,18 +221,22 @@ int main(int argc, char *argv[]) {
                 ropt.iterate_upper_bound = &upper_bound_slice;
             }
             ropt.prefix_same_as_start = true;
-            ropt.snapshot = snapshot;
             size_t round = 0;
-            std::mt19937 mixed_gen(static_cast<uint32_t>(base_seed) ^ static_cast<uint32_t>(0x9e3779b9U * (tid + 1)));
+            std::mt19937 thread_gen(static_cast<uint32_t>(base_seed) ^ static_cast<uint32_t>(tid));
             std::uniform_int_distribution<int> mixed_dist(0, 99);
 
             size_t key_count = args.iterations / args.threads + (tid < args.iterations % args.threads ? 1 : 0);
+            std::vector<size_t> indices(key_count);
+            std::iota(indices.begin(), indices.end(), 0);
+            if (args.random) {
+                std::shuffle(indices.begin(), indices.end(), thread_gen);
+            }
 
             ready_barrier.arrive_and_wait();
             start_barrier.arrive_and_wait();
 
             if (args.mode == "insert") {
-                for (size_t i = 0; i < key_count; ++i) {
+                for (size_t i: indices) {
                     auto key = std::format("key_{}_{}", tid, i);
                     key.resize(args.key_size, 'x');
                     round += 1;
@@ -246,9 +245,8 @@ int main(int argc, char *argv[]) {
                     kv->Commit();
                     delete kv;
                 }
-
             } else if (args.mode == "get") {
-                for (size_t i = 0; i < key_count; ++i) {
+                for (size_t i: indices) {
                     auto key = std::format("key_{}_{}", tid, i);
                     key.resize(args.key_size, 'x');
                     round += 1;
@@ -258,11 +256,11 @@ int main(int argc, char *argv[]) {
                     delete kv;
                 }
             } else if (args.mode == "mixed") {
-                for (size_t i = 0; i < key_count; ++i) {
+                for (size_t i: indices) {
                     auto key = std::format("key_{}_{}", tid, i);
                     key.resize(args.key_size, 'x');
                     round += 1;
-                    auto is_insert = mixed_dist(mixed_gen) < static_cast<int>(args.insert_ratio);
+                    auto is_insert = mixed_dist(thread_gen) < static_cast<int>(args.insert_ratio);
                     auto *kv = db->BeginTransaction(wopt);
                     if (is_insert) {
                         kv->Put(handle, key, val);
@@ -275,7 +273,6 @@ int main(int argc, char *argv[]) {
             } else if (args.mode == "scan") {
                 auto *iter = db->NewIterator(ropt);
                 iter->Seek(prefix);
-                size_t n = 0;
                 while (iter->Valid()) {
                     round += 1;
                     auto k = iter->key();
@@ -283,7 +280,6 @@ int main(int argc, char *argv[]) {
                     black_box(k);
                     black_box(v);
                     iter->Next();
-                    n += 1;
                 }
                 delete iter;
             }
@@ -313,7 +309,6 @@ int main(int argc, char *argv[]) {
     }
     fmt::println("{},{},{},{},{},{},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, (uint64_t) ops,
                  (uint64_t) b.elapse_ms());
-    db->ReleaseSnapshot(snapshot);
     delete handle;
     delete db;
     std::filesystem::remove_all(args.path);
