@@ -236,9 +236,13 @@ fn main() {
         x.join().unwrap();
     }
 
-    let duration = start_time.elapsed();
+    let elapsed_us = start_time.elapsed().as_micros() as u64;
     let total = total_ops.load(std::sync::atomic::Ordering::Relaxed);
-    let ops = (total as f64 / duration.as_secs_f64()) as usize;
+    let ops = if elapsed_us == 0 {
+        0
+    } else {
+        ((total as u128 * 1_000_000u128) / elapsed_us as u128) as usize
+    };
 
     let ratio = if args.mode == "mixed" {
         args.insert_ratio
@@ -257,13 +261,7 @@ fn main() {
     }
     println!(
         "{},{},{},{},{},{},{}",
-        mode,
-        args.threads,
-        args.key_size,
-        args.value_size,
-        ratio,
-        ops,
-        duration.as_millis()
+        mode, args.threads, args.key_size, args.value_size, ratio, ops, elapsed_us
     );
     drop(db);
     #[cfg(feature = "custom_alloc")]

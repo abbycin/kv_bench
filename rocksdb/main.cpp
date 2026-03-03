@@ -17,9 +17,11 @@
 #include <rocksdb/utilities/transaction.h>
 #include <rocksdb/utilities/transaction_db.h>
 
+#include <algorithm>
 #include <barrier>
 #include <filesystem>
 #include <format>
+#include <numeric>
 #include <string>
 
 #include <pthread.h>
@@ -45,6 +47,13 @@ static void bind_core(size_t tid) {
     auto core = static_cast<int>(tid % cores_online());
     CPU_SET(core, &set);
     (void) pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
+}
+
+static void require_ok(const rocksdb::Status &st, const char *what) {
+    if (!st.ok()) {
+        fmt::println(stderr, "{} failed: {}", what, st.ToString());
+        std::abort();
+    }
 }
 
 struct Args {
@@ -159,19 +168,17 @@ int main(int argc, char *argv[]) {
 
     auto wopt = rocksdb::WriteOptions();
     wopt.no_slowdown = true;
-    // wopt.disableWAL = true;
     std::vector<std::thread> wg;
     std::atomic<uint64_t> total_op{0};
     rocksdb::OptimisticTransactionDB *db;
     auto b = nm::Instant::now();
     std::vector<rocksdb::ColumnFamilyHandle *> handles{};
     auto s = rocksdb::OptimisticTransactionDB::Open(options, args.path, cfd, &handles, &db);
-    assert(s.ok());
+    require_ok(s, "open db");
     std::barrier ready_barrier{static_cast<ptrdiff_t>(args.threads + 1)};
     std::barrier start_barrier{static_cast<ptrdiff_t>(args.threads + 1)};
 
     std::random_device rd{};
-    std::mt19937 gen(rd());
 
     std::string val(args.value_size, 'x');
 
@@ -189,9 +196,9 @@ int main(int argc, char *argv[]) {
                     for (size_t j = 0; j < batch_size && (i + j) < count; ++j) {
                         auto key = std::format("key_{}_{}", tid, i + j);
                         key.resize(args.key_size, 'x');
-                        kv->Put(handle, key, val);
+                        require_ok(kv->Put(handle, key, val), "fill put");
                     }
-                    kv->Commit();
+                    require_ok(kv->Commit(), "fill commit");
                     delete kv;
                 }
             });
@@ -204,7 +211,7 @@ int main(int argc, char *argv[]) {
         handles.clear();
         // re-open db
         s = rocksdb::OptimisticTransactionDB::Open(options, args.path, cfd, &handles, &db);
-        assert(s.ok());
+        require_ok(s, "reopen db");
         handle = handles[0];
     }
 
@@ -241,19 +248,18 @@ int main(int argc, char *argv[]) {
                     key.resize(args.key_size, 'x');
                     round += 1;
                     auto *kv = db->BeginTransaction(wopt);
-                    kv->Put(handle, key, val);
-                    kv->Commit();
+                    require_ok(kv->Put(handle, key, val), "insert put");
+                    require_ok(kv->Commit(), "insert commit");
                     delete kv;
                 }
             } else if (args.mode == "get") {
+                // rocksdb has no dedicated read-only txn in this bench path, use direct get for fair read-path
+                // comparison with mace view
                 for (size_t i: indices) {
                     auto key = std::format("key_{}_{}", tid, i);
                     key.resize(args.key_size, 'x');
                     round += 1;
-                    auto *kv = db->BeginTransaction(wopt);
-                    kv->Get(ropt, handle, key, &rval);
-                    kv->Commit();
-                    delete kv;
+                    require_ok(db->Get(ropt, handle, key, &rval), "get");
                 }
             } else if (args.mode == "mixed") {
                 for (size_t i: indices) {
@@ -263,11 +269,14 @@ int main(int argc, char *argv[]) {
                     auto is_insert = mixed_dist(thread_gen) < static_cast<int>(args.insert_ratio);
                     auto *kv = db->BeginTransaction(wopt);
                     if (is_insert) {
-                        kv->Put(handle, key, val);
+                        require_ok(kv->Put(handle, key, val), "mixed put");
                     } else {
-                        kv->Get(ropt, handle, key, &rval);
+                        auto st = kv->Get(ropt, handle, key, &rval);
+                        if (!st.ok() && !st.IsNotFound()) {
+                            require_ok(st, "mixed get");
+                        }
                     }
-                    kv->Commit();
+                    require_ok(kv->Commit(), "mixed commit");
                     delete kv;
                 }
             } else if (args.mode == "scan") {
@@ -281,6 +290,7 @@ int main(int argc, char *argv[]) {
                     black_box(v);
                     iter->Next();
                 }
+                require_ok(iter->status(), "scan iterate");
                 delete iter;
             }
             total_op.fetch_add(round, std::memory_order::relaxed);
@@ -299,7 +309,13 @@ int main(int argc, char *argv[]) {
             return args.insert_ratio;
         return args.mode == "insert" ? 100 : 0;
     }();
-    uint64_t ops = total_op.load(std::memory_order_relaxed) / b.elapse_sec();
+    const auto elapsed_us = b.elapse_usec();
+    uint64_t ops = 0;
+    const auto total = total_op.load(std::memory_order_relaxed);
+    if (elapsed_us > 0) {
+        ops = static_cast<uint64_t>(static_cast<double>(total) * 1000000.0 / elapsed_us);
+    }
+
     if (args.mode == "insert") {
         if (args.random) {
             args.mode = "random_insert";
@@ -307,8 +323,8 @@ int main(int argc, char *argv[]) {
             args.mode = "sequential_insert";
         }
     }
-    fmt::println("{},{},{},{},{},{},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, (uint64_t) ops,
-                 (uint64_t) b.elapse_ms());
+    fmt::println("{},{},{},{},{},{},{}", args.mode, args.threads, args.key_size, args.value_size, ratio, ops,
+                 static_cast<uint64_t>(elapsed_us));
     delete handle;
     delete db;
     std::filesystem::remove_all(args.path);

@@ -47,7 +47,7 @@ function samples() {
         done
 }
 
-echo mode,threads,key_size,value_size,insert_ratio,ops,elapsed > "${script_dir}/rocksdb.csv"
+echo mode,threads,key_size,value_size,insert_ratio,ops,elapsed_us > "${script_dir}/rocksdb.csv"
 samples "$1" 1>> "${script_dir}/rocksdb.csv"
 if [ -x "${script_dir}/bin/python" ]; then
     (cd "${script_dir}" && "${script_dir}/bin/python" plot.py rocksdb.csv)
