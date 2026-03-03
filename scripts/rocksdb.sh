@@ -2,55 +2,65 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 1 ]
-then
-  printf "\033[m$0 path\033[0m\n"
-  exit 1
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    printf "Usage: %s <storage_root> [result_csv]\n" "$0"
+    exit 1
 fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 root_dir="$(cd -- "${script_dir}/.." && pwd)"
 rocksdb_dir="${root_dir}/rocksdb"
+# shellcheck source=./thread_points.sh
+. "${script_dir}/thread_points.sh"
 
-(cd "${rocksdb_dir}" && cmake --preset release 1>/dev/null 2>/dev/null)
-(cd "${rocksdb_dir}" && cmake --build --preset release 1>/dev/null 2>/dev/null)
+db_root="$1"
+result_file="${2:-${script_dir}/benchmark_results.csv}"
 
-function samples() {
-        kv_sz=(16 16 100 1024 1024 1024 16 10240)
-        mode=(insert get mixed scan)
-        # set -x
-        db_root="$1"
-        cnt=100000
-        for ((i = 1; i <= $(nproc); i *= 2))
-        do
-                for ((j = 0; j < ${#kv_sz[@]}; j += 2))
-                do
-                        for ((k = 0; k < ${#mode[@]}; k += 1))
-                        do
-                            if [ "${mode[k]}" == "insert" ]
-                            then
-                                "${rocksdb_dir}/build/release/rocksdb_bench" --path "${db_root}" --threads "${i}" --iterations "${cnt}" --mode "${mode[k]}" --key-size "${kv_sz[j]}" --value-size "${kv_sz[j+1]}" --random
-                                if test $? -ne 0
-                                then
-                                        echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} random fail"
-                                        exit 1
-                                fi
-                            fi
-                            "${rocksdb_dir}/build/release/rocksdb_bench" --path "${db_root}" --threads "${i}" --iterations "${cnt}" --mode "${mode[k]}" --key-size "${kv_sz[j]}" --value-size "${kv_sz[j+1]}"
-                            if test $? -ne 0
-                            then
-                                    echo "${mode[k]} threads $i ksz ${kv_sz[j]} vsz ${kv_sz[j+1]} fail"
-                                    exit 1
-                            fi
-                      done
-                done
-        done
-}
+warmup_secs="${WARMUP_SECS:-10}"
+measure_secs="${MEASURE_SECS:-20}"
+prefill_keys="${PREFILL_KEYS:-200000}"
+read_path="${READ_PATH:-snapshot}"
 
-echo mode,threads,key_size,value_size,insert_ratio,ops,elapsed_us > "${script_dir}/rocksdb.csv"
-samples "$1" 1>> "${script_dir}/rocksdb.csv"
-if [ -x "${script_dir}/bin/python" ]; then
-    (cd "${script_dir}" && "${script_dir}/bin/python" plot.py rocksdb.csv)
-else
-    (cd "${script_dir}" && python3 plot.py rocksdb.csv)
+mkdir -p "${db_root}"
+mkdir -p "$(dirname -- "${result_file}")"
+
+(cd "${rocksdb_dir}" && cmake --preset release)
+(cd "${rocksdb_dir}" && cmake --build --preset release)
+
+workloads=(W1 W2 W3 W4 W5 W6)
+rocksdb_threads_raw="${ROCKSDB_THREADS:-$(default_thread_points)}"
+IFS=' ' read -r -a threads <<< "${rocksdb_threads_raw}"
+if [ "${#threads[@]}" -eq 0 ]; then
+    printf "rocksdb threads list must not be empty\n" >&2
+    exit 1
 fi
+profiles=(
+  "16 128"
+  "32 1024"
+  "32 4096"
+  "32 16384"
+)
+
+for workload in "${workloads[@]}"; do
+    for t in "${threads[@]}"; do
+        for kv in "${profiles[@]}"; do
+            read -r key_size value_size <<< "${kv}"
+            run_path="$(mktemp -u -p "${db_root}" "rocksdb_${workload}_${t}_${key_size}_${value_size}_XXXXXX")"
+            printf "[rocksdb] workload=%s threads=%s key=%s value=%s path=%s\n" \
+              "${workload}" "${t}" "${key_size}" "${value_size}" "${run_path}"
+            "${rocksdb_dir}/build/release/rocksdb_bench" \
+              --path "${run_path}" \
+              --workload "${workload}" \
+              --threads "${t}" \
+              --key-size "${key_size}" \
+              --value-size "${value_size}" \
+              --prefill-keys "${prefill_keys}" \
+              --warmup-secs "${warmup_secs}" \
+              --measure-secs "${measure_secs}" \
+              --read-path "${read_path}" \
+              --result-file "${result_file}"
+        done
+    done
+done
+
+printf "RocksDB runs finished. Results appended to: %s\n" "${result_file}"

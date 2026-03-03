@@ -1,65 +1,81 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-from adjustText import adjust_text
+#!/usr/bin/env python3
+
 import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
 
 
-def real_mode(m):
-    if m == "mixed":
-        return "Mixed (70% Get, 30% Insert)"
-    elif m == "get":
-        return "Random Get"
-    elif m == "scan":
-        return "Sequential Scan"
-    return m.capitalize()
+def main() -> int:
+    if len(sys.argv) not in (2, 3):
+        print(f"Usage: {sys.argv[0]} <result_csv> [output_dir]")
+        return 1
+
+    result_csv = Path(sys.argv[1])
+    output_dir = Path(sys.argv[2]) if len(sys.argv) == 3 else result_csv.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    df = pd.read_csv(result_csv)
+
+    required = {
+        "engine",
+        "workload_id",
+        "threads",
+        "key_size",
+        "value_size",
+        "ops_per_sec",
+        "p99_us",
+    }
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    for engine in sorted(df["engine"].unique()):
+        engine_df = df[df["engine"] == engine]
+        profiles = (
+            engine_df[["key_size", "value_size"]]
+            .drop_duplicates()
+            .sort_values(["key_size", "value_size"])
+            .itertuples(index=False)
+        )
+
+        for key_size, value_size in profiles:
+            sub = engine_df[
+                (engine_df["key_size"] == key_size)
+                & (engine_df["value_size"] == value_size)
+            ]
+            if sub.empty:
+                continue
+
+            for metric, ylabel in (("ops_per_sec", "OPS/s"), ("p99_us", "P99 Latency (us)")):
+                plt.figure(figsize=(12, 7))
+                for workload in sorted(sub["workload_id"].unique()):
+                    wdf = sub[sub["workload_id"] == workload].sort_values("threads")
+                    plt.plot(
+                        wdf["threads"],
+                        wdf[metric],
+                        marker="o",
+                        linewidth=2,
+                        label=workload,
+                    )
+
+                plt.title(
+                    f"{engine.upper()} {metric} (key={key_size}, value={value_size})",
+                    fontsize=14,
+                )
+                plt.xlabel("Threads")
+                plt.ylabel(ylabel)
+                plt.grid(True, linestyle="--", alpha=0.5)
+                plt.legend()
+                plt.tight_layout()
+                out = output_dir / f"{engine}_{metric}_k{key_size}_v{value_size}.png"
+                plt.savefig(out)
+                plt.close()
+
+    print(f"Charts written to: {output_dir}")
+    return 0
 
 
-name = sys.argv[1]
-prefix = name.split(".")[0]
-
-# read benchmark data
-# keep compatibility with older csv files that used elapsed/elasped
-# and normalize to elapsed_us
-
-df = pd.read_csv(f"./{name}")
-if "elapsed_us" not in df.columns:
-    if "elapsed" in df.columns:
-        df = df.rename(columns={"elapsed": "elapsed_us"})
-    elif "elasped" in df.columns:
-        df = df.rename(columns={"elasped": "elapsed_us"})
-
-# group by mode
-modes = df["mode"].unique()
-
-for mode in modes:
-    plt.figure(figsize=(16, 9))
-    subset = df[df["mode"] == mode]
-
-    # group by key/value size
-    key_value_combinations = subset.groupby(["key_size", "value_size"])
-
-    texts = []
-    for (key_size, value_size), group in key_value_combinations:
-        label = f"key={key_size}B, val={value_size}B"
-        x = group["threads"]
-        y = group["ops"]
-
-        # draw line
-        line, = plt.plot(x, y, marker="o", label=label)
-
-        # add labels
-        for xi, yi, ops in zip(x, y, group["ops"]):
-            texts.append(
-                plt.text(xi, yi, f"{int(ops)}", color=line.get_color(), fontsize=12)
-            )
-
-    adjust_text(texts, arrowprops=dict(arrowstyle="->", color="gray"))
-
-    plt.title(f"{prefix.upper()}: {real_mode(mode)}", fontsize=16)
-    plt.xlabel("Threads", fontsize=14)
-    plt.ylabel("OPS", fontsize=14)
-    plt.grid(True, linestyle="--", alpha=0.6)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(f"{prefix}_{mode}.png")
-    plt.close()
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -11,3 +11,9 @@ Cargo.lock
 free.txt
 alloc.txt
 *.zst
+*.png
+__pycache__
+*.log
+*.md
+!README.md
+!repro.md

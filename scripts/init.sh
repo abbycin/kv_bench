@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
 python3 -m venv .
-./bin/pip3 install pandas matplotlib adjustText
+./bin/pip3 install pandas matplotlib
 rm -f .gitignore
