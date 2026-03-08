@@ -374,6 +374,12 @@ static uint64_t now_epoch_ms() {
     return static_cast<uint64_t>(ms.count());
 }
 
+static uint64_t steady_now_ns() {
+    auto now = std::chrono::steady_clock::now();
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
+    return static_cast<uint64_t>(ns.count());
+}
+
 static uint64_t read_mem_kb(const char *key) {
     std::ifstream in("/proc/meminfo");
     if (!in.is_open()) {
@@ -433,7 +439,7 @@ static const char *result_header() {
 
 static std::string result_row_csv(const ResultRow &r) {
     return fmt::format(
-            "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             r.ts_epoch_ms,
             "rocksdb",
             csv_escape(r.workload_id),
@@ -455,7 +461,7 @@ static std::string result_row_csv(const ResultRow &r) {
             r.measure_secs,
             r.total_ops,
             r.error_ops,
-            r.ops_per_sec,
+            static_cast<uint64_t>(r.ops_per_sec),
             r.quantiles.p50_us,
             r.quantiles.p95_us,
             r.quantiles.p99_us,
@@ -570,7 +576,8 @@ static bool run_one_op(OpKind op,
                        size_t local_key_len,
                        size_t tid,
                        std::atomic<size_t> &insert_counter,
-                       size_t &local_insert_idx) {
+                       size_t &local_insert_idx,
+                       std::optional<size_t> fixed_insert_id) {
     if (op == OpKind::Read) {
         auto maybe_id = pick_key_id(rng, distribution, zipf_theta, shared_keyspace, prefill_keys, local_key_len);
         if (!maybe_id.has_value()) {
@@ -599,7 +606,14 @@ static bool run_one_op(OpKind op,
     if (op == OpKind::Update) {
         std::optional<std::string> key;
         if (spec.insert_only) {
-            if (shared_keyspace) {
+            if (fixed_insert_id.has_value()) {
+                auto id = fixed_insert_id.value();
+                if (shared_keyspace) {
+                    key = make_shared_key(id, key_size);
+                } else {
+                    key = make_thread_key(tid, id, key_size);
+                }
+            } else if (shared_keyspace) {
                 auto id = insert_counter.fetch_add(1, std::memory_order_relaxed);
                 key = make_shared_key(id, key_size);
             } else {
@@ -762,6 +776,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     auto workload_spec = workload_spec_opt.value();
+    auto legacy_mode = workload_spec.id.rfind("LEGACY_", 0) == 0;
+    auto effective_warmup_secs = legacy_mode ? 0ULL : args.warmup_secs;
+    auto effective_measure_secs = legacy_mode ? 0ULL : args.measure_secs;
+    auto mixed_workload = workload_spec.read_pct > 0 && workload_spec.update_pct > 0;
+    if (mixed_workload && !args.shared_keyspace) {
+        fmt::println(stderr, "mixed workloads require shared keyspace");
+        return 1;
+    }
 
     auto prefill_keys = workload_spec.requires_prefill
                         ? (args.prefill_keys > 0 ? args.prefill_keys : std::max<size_t>(args.iterations, 1))
@@ -853,11 +875,18 @@ int main(int argc, char *argv[]) {
     std::barrier measure_barrier(static_cast<ptrdiff_t>(args.threads + 1));
 
     std::atomic<size_t> insert_counter{0};
+    std::atomic<uint64_t> measure_start_ns{0};
     std::vector<std::thread> workers;
     workers.reserve(args.threads);
     std::vector<ThreadStats> thread_stats(args.threads);
 
     auto seed_base = now_epoch_ms();
+    auto mark_measure_start = [&measure_start_ns]() {
+        uint64_t expected = 0;
+        auto now_ns = steady_now_ns();
+        (void) measure_start_ns.compare_exchange_strong(
+                expected, now_ns, std::memory_order_relaxed);
+    };
 
     for (size_t tid = 0; tid < args.threads; ++tid) {
         workers.emplace_back([&, tid] {
@@ -865,6 +894,7 @@ int main(int argc, char *argv[]) {
             auto &stats = thread_stats[tid];
             std::mt19937_64 rng(seed_base ^ ((tid + 1) * 0x9E3779B97F4A7C15ULL));
             auto local_key_len = prefill_ranges[tid].len;
+            auto local_op_start = op_ranges[tid].start;
             auto local_op_len = op_ranges[tid].len;
             size_t local_insert_idx = 0;
 
@@ -876,8 +906,9 @@ int main(int argc, char *argv[]) {
 
             ready_barrier.arrive_and_wait();
 
-            if (args.warmup_secs > 0) {
-                auto warmup_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(args.warmup_secs);
+            if (effective_warmup_secs > 0) {
+                auto warmup_deadline =
+                        std::chrono::steady_clock::now() + std::chrono::seconds(effective_warmup_secs);
                 while (std::chrono::steady_clock::now() < warmup_deadline) {
                     auto op = pick_op_kind(rng, workload_spec);
                     (void) run_one_op(op,
@@ -897,11 +928,13 @@ int main(int argc, char *argv[]) {
                                       local_key_len,
                                       tid,
                                       insert_counter,
-                                      local_insert_idx);
+                                      local_insert_idx,
+                                      std::nullopt);
                 }
             }
 
             measure_barrier.arrive_and_wait();
+            mark_measure_start();
 
             auto record = [&](bool ok, uint64_t us) {
                 stats.total_ops += 1;
@@ -912,8 +945,9 @@ int main(int argc, char *argv[]) {
                 stats.hist[b] += 1;
             };
 
-            if (args.measure_secs > 0) {
-                auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(args.measure_secs);
+            if (effective_measure_secs > 0) {
+                auto deadline =
+                        std::chrono::steady_clock::now() + std::chrono::seconds(effective_measure_secs);
                 while (std::chrono::steady_clock::now() < deadline) {
                     auto op = pick_op_kind(rng, workload_spec);
                     auto started = std::chrono::steady_clock::now();
@@ -934,15 +968,20 @@ int main(int argc, char *argv[]) {
                                          local_key_len,
                                          tid,
                                          insert_counter,
-                                         local_insert_idx);
+                                         local_insert_idx,
+                                         std::nullopt);
                     auto us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now() - started).count());
                     record(ok, us);
                 }
             } else {
                 for (size_t i: count_indices) {
-                    (void) i;
                     auto op = workload_spec.insert_only ? OpKind::Update : pick_op_kind(rng, workload_spec);
+                    std::optional<size_t> fixed_insert_id = std::nullopt;
+                    if (workload_spec.insert_only) {
+                        fixed_insert_id =
+                                args.shared_keyspace ? (local_op_start + i) : i;
+                    }
                     auto started = std::chrono::steady_clock::now();
                     auto ok = run_one_op(op,
                                          db,
@@ -961,7 +1000,8 @@ int main(int argc, char *argv[]) {
                                          local_key_len,
                                          tid,
                                          insert_counter,
-                                         local_insert_idx);
+                                         local_insert_idx,
+                                         fixed_insert_id);
                     auto us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now() - started).count());
                     record(ok, us);
@@ -972,13 +1012,18 @@ int main(int argc, char *argv[]) {
 
     ready_barrier.arrive_and_wait();
     measure_barrier.arrive_and_wait();
-    auto measure_started = nm::Instant::now();
+    mark_measure_start();
 
     for (auto &w: workers) {
         w.join();
     }
 
-    uint64_t elapsed_us = static_cast<uint64_t>(measure_started.elapse_usec());
+    auto measure_end_ns = steady_now_ns();
+    auto measure_begin_ns = measure_start_ns.load(std::memory_order_relaxed);
+    if (measure_begin_ns == 0 || measure_end_ns < measure_begin_ns) {
+        measure_begin_ns = measure_end_ns;
+    }
+    uint64_t elapsed_us = (measure_end_ns - measure_begin_ns) / 1000;
     uint64_t total_ops = 0;
     uint64_t error_ops = 0;
     std::array<uint64_t, kLatencyBuckets> merged_hist{};
@@ -1012,8 +1057,8 @@ int main(int argc, char *argv[]) {
             .scan_pct = workload_spec.scan_pct,
             .scan_len = workload_spec.scan_len,
             .read_path = read_path.value(),
-            .warmup_secs = args.warmup_secs,
-            .measure_secs = args.measure_secs,
+            .warmup_secs = effective_warmup_secs,
+            .measure_secs = effective_measure_secs,
             .total_ops = total_ops,
             .error_ops = error_ops,
             .ops_per_sec = ops_per_sec,
@@ -1033,14 +1078,14 @@ int main(int argc, char *argv[]) {
     }
 
     fmt::println(
-            "engine=rocksdb workload={} mode={} durability={} threads={} ops={} err={} qps={:.2} p99_us={} result_file={}",
+            "engine=rocksdb workload={} mode={} durability={} threads={} ops={} err={} qps={} p99_us={} result_file={}",
             row.workload_id,
             row.mode,
             durability_str(row.durability_mode),
             row.threads,
             row.total_ops,
             row.error_ops,
-            row.ops_per_sec,
+            static_cast<uint64_t>(row.ops_per_sec),
             row.quantiles.p99_us,
             args.result_file);
 

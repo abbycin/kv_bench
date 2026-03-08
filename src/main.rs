@@ -12,7 +12,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::process::exit;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -667,7 +667,10 @@ fn main() {
     let read_path = match ReadPath::parse(&args.read_path) {
         Some(r) => r,
         None => {
-            eprintln!("invalid read_path `{}` (supported: snapshot, rw_txn)", args.read_path);
+            eprintln!(
+                "invalid read_path `{}` (supported: snapshot, rw_txn)",
+                args.read_path
+            );
             exit(1);
         }
     };
@@ -690,6 +693,9 @@ fn main() {
             exit(1);
         }
     };
+    let legacy_mode = workload.id.starts_with("LEGACY_");
+    let effective_warmup_secs = if legacy_mode { 0 } else { args.warmup_secs };
+    let effective_measure_secs = if legacy_mode { 0 } else { args.measure_secs };
 
     let mixed_workload = workload.read_pct > 0 && workload.update_pct > 0;
     if mixed_workload && !shared_keyspace {
@@ -772,6 +778,7 @@ fn main() {
     let op_counts = split_ranges(args.iterations, args.threads);
     let ready_barrier = Arc::new(Barrier::new(args.threads + 1));
     let measure_barrier = Arc::new(Barrier::new(args.threads + 1));
+    let measure_start = Arc::new(Mutex::new(None::<Instant>));
     let insert_counter = Arc::new(AtomicUsize::new(0));
 
     let handles: Vec<JoinHandle<ThreadStats>> = (0..args.threads)
@@ -781,18 +788,20 @@ fn main() {
             let spec = workload.clone();
             let ready = Arc::clone(&ready_barrier);
             let measure = Arc::clone(&measure_barrier);
+            let measure_start_slot = Arc::clone(&measure_start);
             let ins_ctr = Arc::clone(&insert_counter);
             let key_size = args.key_size;
             let random_insert = args.random;
             let read_path_mode = read_path;
-            let warmup_secs = args.warmup_secs;
-            let measure_secs = args.measure_secs;
+            let warmup_secs = effective_warmup_secs;
+            let measure_secs = effective_measure_secs;
             let distribution = spec.distribution;
             let zipf_theta = args.zipf_theta;
             let scan_len = spec.scan_len;
             let shared = shared_keyspace;
             let prefill_key_count = prefill_keys;
             let local_key_len = thread_prefill_ranges[tid].len;
+            let local_op_start = op_counts[tid].start;
             let local_op_count = op_counts[tid].len;
 
             std::thread::spawn(move || {
@@ -835,11 +844,19 @@ fn main() {
                             &ins_ctr,
                             &mut local_insert_idx,
                             None,
+                            None,
                         );
                     }
                 }
 
                 measure.wait();
+                {
+                    let now = Instant::now();
+                    let mut slot = measure_start_slot.lock().unwrap();
+                    if slot.map_or(true, |prev| now < prev) {
+                        *slot = Some(now);
+                    }
+                }
 
                 if measure_secs > 0 {
                     let deadline = Instant::now() + Duration::from_secs(measure_secs);
@@ -862,13 +879,18 @@ fn main() {
                             tid,
                             &ins_ctr,
                             &mut local_insert_idx,
+                            None,
                             Some(&mut stats),
                         );
                     }
                 } else {
                     for idx in count_indices {
+                        let fixed_insert_id = if spec.insert_only {
+                            Some(if shared { local_op_start + idx } else { idx })
+                        } else {
+                            None
+                        };
                         let op = if spec.insert_only {
-                            let _ = idx;
                             OpKind::Update
                         } else {
                             pick_op_kind(&mut rng, &spec)
@@ -890,6 +912,7 @@ fn main() {
                             tid,
                             &ins_ctr,
                             &mut local_insert_idx,
+                            fixed_insert_id,
                             Some(&mut stats),
                         );
                     }
@@ -902,7 +925,13 @@ fn main() {
 
     ready_barrier.wait();
     measure_barrier.wait();
-    let measure_started = Instant::now();
+    {
+        let now = Instant::now();
+        let mut slot = measure_start.lock().unwrap();
+        if slot.map_or(true, |prev| now < prev) {
+            *slot = Some(now);
+        }
+    }
 
     let mut merged_hist = [0u64; LAT_BUCKETS];
     let mut total_ops = 0u64;
@@ -917,7 +946,9 @@ fn main() {
         }
     }
 
-    let elapsed_us = measure_started.elapsed().as_micros() as u64;
+    let measure_end = Instant::now();
+    let measure_started = (*measure_start.lock().unwrap()).unwrap_or(measure_end);
+    let elapsed_us = measure_end.duration_since(measure_started).as_micros() as u64;
     let ops_per_sec = if elapsed_us == 0 {
         0.0
     } else {
@@ -949,8 +980,8 @@ fn main() {
         scan_pct: workload.scan_pct,
         scan_len: workload.scan_len,
         read_path,
-        warmup_secs: args.warmup_secs,
-        measure_secs: args.measure_secs,
+        warmup_secs: effective_warmup_secs,
+        measure_secs: effective_measure_secs,
         total_ops,
         error_ops,
         ops_per_sec,
@@ -1000,6 +1031,7 @@ fn run_one_op(
     tid: usize,
     insert_counter: &AtomicUsize,
     local_insert_idx: &mut usize,
+    fixed_insert_id: Option<usize>,
     stats: Option<&mut ThreadStats>,
 ) {
     let start = stats.as_ref().map(|_| Instant::now());
@@ -1021,11 +1053,9 @@ fn run_one_op(
                     make_thread_key(tid, id, key_size)
                 };
                 match read_path {
-                    ReadPath::Snapshot => bucket
-                        .view()
-                        .ok()
-                        .and_then(|tx| tx.get(key).ok())
-                        .is_some(),
+                    ReadPath::Snapshot => {
+                        bucket.view().ok().and_then(|tx| tx.get(key).ok()).is_some()
+                    }
                     ReadPath::RwTxn => {
                         if let Ok(tx) = bucket.begin() {
                             let get_ok = tx.get(key).is_ok();
@@ -1042,7 +1072,13 @@ fn run_one_op(
         }
         OpKind::Update => {
             let key_opt = if spec.insert_only {
-                if shared_keyspace {
+                if let Some(id) = fixed_insert_id {
+                    if shared_keyspace {
+                        Some(make_shared_key(id, key_size))
+                    } else {
+                        Some(make_thread_key(tid, id, key_size))
+                    }
+                } else if shared_keyspace {
                     let id = insert_counter.fetch_add(1, Ordering::Relaxed);
                     Some(make_shared_key(id, key_size))
                 } else {
