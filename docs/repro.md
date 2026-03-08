@@ -63,6 +63,10 @@ WARMUP_SECS=3 MEASURE_SECS=5 PREFILL_KEYS=50000 \
 ./scripts/rocksdb.sh "${KV_BENCH_STORAGE_ROOT}/basic_rocks" "${KV_BENCH_RESULT_ROOT}/benchmark_results.csv"
 ```
 
+Fairness note:
+- For read-heavy workloads (`get`, `scan`, `mixed`, and `W1`-`W6`), both harnesses run one GC/compaction pass after prefill and before warmup/measurement.
+- The purpose is to make the RocksDB vs Mace comparison fairer, since RocksDB reads may need to touch multiple SSTs and should not be benchmarked with GC/compaction artificially disabled.
+
 Generate plots:
 
 ```bash
@@ -202,5 +206,6 @@ Only compare rows with identical:
 - `threads`
 - `durability_mode`
 - `read_path`
+- read-heavy workload rows are expected to include the pre-run GC/compaction pass described above
 
 If `error_ops > 0`, investigate that case before drawing conclusions.

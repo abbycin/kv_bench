@@ -378,6 +378,10 @@ fn parse_workload(args: &Args) -> Result<WorkloadSpec, String> {
     }
 }
 
+fn workload_runs_gc(spec: &WorkloadSpec) -> bool {
+    spec.requires_prefill
+}
+
 fn split_ranges(total: usize, n: usize) -> Vec<ThreadRange> {
     let mut ranges = Vec::with_capacity(n);
     if n == 0 {
@@ -773,6 +777,11 @@ fn main() {
         for h in fill_handles {
             h.join().unwrap();
         }
+    }
+
+    if workload_runs_gc(&workload) {
+        db.enable_gc();
+        db.start_gc();
     }
 
     let op_counts = split_ranges(args.iterations, args.threads);

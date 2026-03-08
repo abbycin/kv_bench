@@ -144,7 +144,7 @@ def run_engine_cases(
                     f"[run] engine={engine} mode={mode_display} "
                     f"threads={threads} key={key_size} value={value_size}"
                 )
-                print(f"{' '.join(args)}")
+                # print(f"{' '.join(args)}")
                 subprocess.run(args, check=True)
 
 

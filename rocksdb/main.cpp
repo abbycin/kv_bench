@@ -289,6 +289,22 @@ static std::optional<WorkloadSpec> parse_workload(const Args &args, std::string 
     return std::nullopt;
 }
 
+static bool workload_runs_gc(const WorkloadSpec &spec) {
+    return spec.requires_prefill;
+}
+
+static void run_prefill_gc(rocksdb::OptimisticTransactionDB *db,
+                           rocksdb::ColumnFamilyHandle *handle) {
+    require_ok(db->EnableAutoCompaction({handle}), "enable auto compaction");
+
+    rocksdb::FlushOptions flush_options;
+    flush_options.wait = true;
+    require_ok(db->Flush(flush_options, handle), "prefill flush");
+
+    rocksdb::CompactRangeOptions compact_options;
+    require_ok(db->CompactRange(compact_options, handle, nullptr, nullptr), "prefill compaction");
+}
+
 static std::vector<ThreadRange> split_ranges(size_t total, size_t n) {
     std::vector<ThreadRange> out;
     out.reserve(n);
@@ -801,10 +817,6 @@ int main(int argc, char *argv[]) {
     cfo.enable_blob_files = true;
     cfo.min_blob_size = args.blob_size;
     cfo.disable_auto_compactions = true;
-    cfo.max_compaction_bytes = (1ULL << 60);
-    cfo.level0_stop_writes_trigger = 1000000;
-    cfo.level0_slowdown_writes_trigger = 1000000;
-    cfo.level0_file_num_compaction_trigger = 1000000;
     cfo.write_buffer_size = 64 << 20;
     cfo.max_write_buffer_number = 128;
 
@@ -822,6 +834,7 @@ int main(int argc, char *argv[]) {
     options.enable_pipelined_write = true;
     options.max_background_flushes = 8;
     options.env->SetBackgroundThreads(8, rocksdb::Env::Priority::HIGH);
+    options.env->SetBackgroundThreads(8, rocksdb::Env::Priority::LOW);
 
     auto wopt = rocksdb::WriteOptions();
     wopt.no_slowdown = true;
@@ -869,6 +882,10 @@ int main(int argc, char *argv[]) {
         for (auto &t: fill_threads) {
             t.join();
         }
+    }
+
+    if (workload_runs_gc(workload_spec)) {
+        run_prefill_gc(db, handle);
     }
 
     std::barrier ready_barrier(static_cast<ptrdiff_t>(args.threads + 1));
