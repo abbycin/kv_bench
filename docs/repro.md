@@ -36,7 +36,7 @@ Requirements:
 - Keep at least `25GB` free under storage root before long runs.
 
 ## 3. Initialization
-assume that kv_bench repo is located in `$HOME`
+Assume that kv_bench repo is located in `$HOME`
 ```bash
 cd "$HOME/kv_bench/scripts"
 ./init.sh

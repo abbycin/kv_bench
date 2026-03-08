@@ -52,35 +52,8 @@ mkdir -p "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_r
   - `W1/W2/W3/W4`: mixed read+update p99
   - `W5`: mixed read+update+scan p99
   - `W6`: scan p99
-- Reliability gate: if `error_ops > 0`, debug that case before drawing conclusions
 
 Raw CSV path: `./scripts/benchmark_results.csv`
-
-## Phase Reports
-- Phase 1 (stability CV):
-
-```bash
-./scripts/bin/python ./scripts/phase1_eval.py ./scripts/phase1_results.csv
-```
-
-- Phase 2 (core median + slow scenarios):
-
-```bash
-./scripts/bin/python ./scripts/phase2_report.py ./scripts/phase2_results.csv
-```
-
-- Phase 3 (durability cost):
-
-```bash
-./scripts/bin/python ./scripts/phase3_report.py ./scripts/phase3_results.csv
-```
-
-- Phase 4 (restart/recovery):
-
-```bash
-./scripts/bin/python ./scripts/phase4_report.py ./scripts/phase4_restart_mace.csv
-./scripts/bin/python ./scripts/phase4_report.py ./scripts/phase4_restart_rocks.csv
-```
 
 ## Full Reproduction
 For phase-by-phase commands, knobs, and interpretation rules, use [docs/repro.md](./docs/repro.md).
