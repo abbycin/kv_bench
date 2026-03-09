@@ -68,7 +68,6 @@ struct Args {
     size_t key_size = 16;
     size_t value_size = 1024;
     size_t blob_size = 8192;
-    size_t insert_ratio = 30;
     bool random = false;
     std::string mode = "insert";
     std::optional<std::string> workload;
@@ -277,15 +276,10 @@ static std::optional<WorkloadSpec> parse_workload(const Args &args, std::string 
     if (mode == "get") {
         return WorkloadSpec{"LEGACY_GET", "get", Distribution::Uniform, 100, 0, 0, args.scan_len, true, false};
     }
-    if (mode == "mixed") {
-        return WorkloadSpec{"LEGACY_MIXED", "mixed", Distribution::Uniform,
-                            static_cast<uint8_t>(100 - args.insert_ratio),
-                            static_cast<uint8_t>(args.insert_ratio), 0, args.scan_len, true, false};
-    }
     if (mode == "scan") {
         return WorkloadSpec{"LEGACY_SCAN", "scan", Distribution::Uniform, 0, 0, 100, args.scan_len, true, false};
     }
-    err = fmt::format("invalid mode `{}` (supported: insert/get/mixed/scan)", args.mode);
+    err = fmt::format("invalid mode `{}` (supported: insert/get/scan)", args.mode);
     return std::nullopt;
 }
 
@@ -718,14 +712,13 @@ int main(int argc, char *argv[]) {
     bool disable_cleanup = false;
     std::string workload;
 
-    app.add_option("-m,--mode", args.mode, "Mode: insert, get, mixed, scan");
+    app.add_option("-m,--mode", args.mode, "Mode: insert, get, scan");
     app.add_option("--workload", workload, "Workload preset: W1..W6");
     app.add_option("-t,--threads", args.threads, "Threads");
     app.add_option("-k,--key-size", args.key_size, "Key Size");
     app.add_option("-v,--value-size", args.value_size, "Value Size");
     app.add_option("-b,--blob-size", args.blob_size, "Blob Size");
     app.add_option("-i,--iterations", args.iterations, "Iterations");
-    app.add_option("-r,--insert-ratio", args.insert_ratio, "Update ratio for legacy mixed mode");
     app.add_option("-p,--path", args.path, "Database path");
     app.add_option("--prefill-keys", args.prefill_keys, "Prefill key count");
     app.add_option("--warmup-secs", args.warmup_secs, "Warmup duration seconds");
@@ -763,10 +756,6 @@ int main(int argc, char *argv[]) {
     }
     if (args.key_size < 16 || args.value_size < 16) {
         fmt::println(stderr, "key_size and value_size must be >= 16");
-        return 1;
-    }
-    if (args.insert_ratio > 100) {
-        fmt::println(stderr, "insert_ratio must be in [0,100]");
         return 1;
     }
     if (!(args.zipf_theta > 0.0 && args.zipf_theta < 1.0)) {

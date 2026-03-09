@@ -38,7 +38,6 @@ ENGINE_ORDER = ("mace", "rocksdb")
 MODE_PLAN = (
     ("put", "insert"),
     ("get", "get"),
-    ("mixed", "mixed"),
     ("scan", "scan"),
 )
 KV_PROFILES = (
@@ -98,7 +97,6 @@ def run_engine_cases(
     prefill_keys: int,
     read_path: str,
     durability: str,
-    insert_ratio: int,
 ) -> None:
     for mode_display, mode_cli in MODE_PLAN:
         for threads in thread_points:
@@ -135,8 +133,6 @@ def run_engine_cases(
 
                 if mode_cli != "insert":
                     args.extend(["--prefill-keys", str(prefill_keys)])
-                if mode_cli == "mixed":
-                    args.extend(["--insert-ratio", str(insert_ratio)])
                 if engine == "mace":
                     args.append("--shared-keyspace")
 
@@ -173,9 +169,7 @@ def annotate_points(x_values: Sequence[int], y_values: Sequence[float], y_max: f
         )
 
 
-def mode_title(mode_display: str, insert_ratio: int) -> str:
-    if mode_display == "mixed":
-        return f"Mixed ({100 - insert_ratio}% Get, {insert_ratio}% Put)"
+def mode_title(mode_display: str) -> str:
     return mode_display.capitalize()
 
 
@@ -184,7 +178,6 @@ def plot_results(
     result_csv: Path,
     output_dir: Path,
     thread_points: Sequence[int],
-    insert_ratio: int,
 ) -> list[Path]:
     df = pd.read_csv(result_csv)
     required = {"engine", "mode", "threads", "key_size", "value_size", "ops_per_sec"}
@@ -246,7 +239,7 @@ def plot_results(
                 )
                 annotate_points(x, y, y_max, line_color)
 
-        plt.title(mode_title(mode_display, insert_ratio), fontsize=16)
+        plt.title(mode_title(mode_display), fontsize=16)
         plt.xlabel("Threads", fontsize=14)
         plt.ylabel("OPS/s", fontsize=14)
         plt.xticks(list(thread_points), fontsize=12)
@@ -272,7 +265,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--measure-secs", type=int, default=10)
     parser.add_argument("--iterations", type=int, default=500_000)
     parser.add_argument("--prefill-keys", type=int, default=500_000)
-    parser.add_argument("--insert-ratio", type=int, default=30)
     parser.add_argument("--read-path", choices=("snapshot", "rw_txn"), default="snapshot")
     parser.add_argument("--durability", choices=("relaxed", "durable"), default="relaxed")
     parser.add_argument("--csv-name", default="fast_test_results.csv")
@@ -328,7 +320,6 @@ def main(argv: Sequence[str]) -> int:
             prefill_keys=args.prefill_keys,
             read_path=args.read_path,
             durability=args.durability,
-            insert_ratio=args.insert_ratio,
         )
         run_engine_cases(
             engine="rocksdb",
@@ -342,14 +333,12 @@ def main(argv: Sequence[str]) -> int:
             prefill_keys=args.prefill_keys,
             read_path=args.read_path,
             durability=args.durability,
-            insert_ratio=args.insert_ratio,
         )
 
     outputs = plot_results(
         result_csv=result_csv,
         output_dir=script_dir,
         thread_points=thread_points,
-        insert_ratio=args.insert_ratio,
     )
     print("[done] generated charts:")
     for p in outputs:

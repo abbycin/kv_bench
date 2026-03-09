@@ -48,9 +48,6 @@ struct Args {
     #[arg(short = 'i', long, default_value_t = 10000)]
     iterations: usize,
 
-    #[arg(short = 'r', long, default_value_t = 30)]
-    insert_ratio: u8,
-
     #[arg(long, default_value_t = false)]
     random: bool,
 
@@ -349,17 +346,6 @@ fn parse_workload(args: &Args) -> Result<WorkloadSpec, String> {
             requires_prefill: true,
             insert_only: false,
         }),
-        "mixed" => Ok(WorkloadSpec {
-            id: "LEGACY_MIXED".into(),
-            mode_label: "mixed".into(),
-            distribution: Distribution::Uniform,
-            read_pct: 100u8.saturating_sub(args.insert_ratio),
-            update_pct: args.insert_ratio,
-            scan_pct: 0,
-            scan_len: args.scan_len,
-            requires_prefill: true,
-            insert_only: false,
-        }),
         "scan" => Ok(WorkloadSpec {
             id: "LEGACY_SCAN".into(),
             mode_label: "scan".into(),
@@ -372,7 +358,7 @@ fn parse_workload(args: &Args) -> Result<WorkloadSpec, String> {
             insert_only: false,
         }),
         _ => Err(format!(
-            "invalid mode `{}` (supported: insert, get, mixed, scan)",
+            "invalid mode `{}` (supported: insert, get, scan)",
             args.mode
         )),
     }
@@ -657,10 +643,6 @@ fn main() {
     }
     if args.key_size < 16 || args.value_size < 16 {
         eprintln!("key_size and value_size must be >= 16");
-        exit(1);
-    }
-    if args.insert_ratio > 100 {
-        eprintln!("insert ratio must be between 0 and 100");
         exit(1);
     }
     if !(0.0..1.0).contains(&args.zipf_theta) {

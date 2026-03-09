@@ -64,7 +64,7 @@ WARMUP_SECS=3 MEASURE_SECS=5 PREFILL_KEYS=50000 \
 ```
 
 Fairness note:
-- For read-heavy workloads (`get`, `scan`, `mixed`, and `W1`-`W6`), both harnesses run one GC/compaction pass after prefill and before warmup/measurement.
+- For read-heavy workloads (`get`, `scan`, and `W1`-`W6`), both harnesses run one GC/compaction pass after prefill and before warmup/measurement.
 - The purpose is to make the RocksDB vs Mace comparison fairer, since RocksDB reads may need to touch multiple SSTs and should not be benchmarked with GC/compaction artificially disabled.
 
 Generate plots:
