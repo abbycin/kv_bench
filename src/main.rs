@@ -743,7 +743,7 @@ fn main() {
                     } else {
                         make_thread_key(tid, i, key_size)
                     };
-                    tx.put(key.as_slice(), v.as_slice()).unwrap();
+                    tx.upsert(key.as_slice(), v.as_slice()).unwrap();
                     in_batch += 1;
                     if in_batch >= PREFILL_BATCH {
                         tx.commit().unwrap();
@@ -1099,11 +1099,7 @@ fn run_one_op(
 
             if let Some(key) = key_opt {
                 if let Ok(tx) = bucket.begin() {
-                    let write_ok = if spec.insert_only {
-                        tx.put(key.as_slice(), value.as_slice()).is_ok()
-                    } else {
-                        tx.upsert(key.as_slice(), value.as_slice()).is_ok()
-                    };
+                    let write_ok = tx.upsert(key.as_slice(), value.as_slice()).is_ok();
                     if !write_ok {
                         false
                     } else {
