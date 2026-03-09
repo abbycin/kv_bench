@@ -1,5 +1,7 @@
 # mace 0.0.27 vs rocksdb 10.4.2
 
+For more detailed comparisons, see the `scale` branch
+
 ## sequential insert
 ![mace_sequential_insert](./scripts/mace_sequential_insert.png)
 
