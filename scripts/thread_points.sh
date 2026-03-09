@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Shared helpers for choosing default thread points from host CPU count.
+# Shared helpers for choosing default power-of-two thread points from host CPU count.
 
 detect_logical_cpus() {
     local detected
@@ -28,21 +28,12 @@ is_power_of_two() {
 default_thread_points() {
     local cpu_count="${1:-$(detect_logical_cpus)}"
     local points=()
-    local t
+    local t=1
 
-    if is_power_of_two "${cpu_count}"; then
-        t=1
-        while [ "${t}" -le "${cpu_count}" ]; do
-            points+=("${t}")
-            t=$((t * 2))
-        done
-    else
-        t=1
-        while [ "${t}" -le "${cpu_count}" ]; do
-            points+=("${t}")
-            t=$((t + 2))
-        done
-    fi
+    while [ "${t}" -le "${cpu_count}" ]; do
+        points+=("${t}")
+        t=$((t * 2))
+    done
 
     printf "%s\n" "${points[*]}"
 }

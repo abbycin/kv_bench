@@ -75,8 +75,7 @@ Generate plots:
 
 ## 5. Phase Reproduction
 Default thread points now follow host CPU count:
-- If CPU count is a power of two: `1 2 4 ... N` (e.g., `4 -> 1 2 4`, `8 -> 1 2 4 8`, `16 -> 1 2 4 8 16`)
-- Otherwise: odd-number progression up to near-full CPU usage (e.g., `12 -> 1 3 5 7 9 11`)
+- Always use powers of two up to the largest point not exceeding host CPU count (e.g., `4 -> 1 2 4`, `8 -> 1 2 4 8`, `12 -> 1 2 4 8`, `16 -> 1 2 4 8 16`)
 
 You can still override via `PHASE1_THREADS` / `PHASE2_THREADS_TIER_M` / `PHASE3_THREADS`.
 

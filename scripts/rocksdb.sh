@@ -16,8 +16,8 @@ rocksdb_dir="${root_dir}/rocksdb"
 db_root="$1"
 result_file="${2:-${script_dir}/benchmark_results.csv}"
 
-warmup_secs="${WARMUP_SECS:-10}"
-measure_secs="${MEASURE_SECS:-20}"
+warmup_secs="${WARMUP_SECS:-3}"
+measure_secs="${MEASURE_SECS:-5}"
 prefill_keys="${PREFILL_KEYS:-200000}"
 read_path="${READ_PATH:-snapshot}"
 

@@ -21,6 +21,8 @@ cd "$HOME/kv_bench"
 
 3. Run baseline comparison (both engines append to the same CSV):
 
+Default quick-baseline timing in these scripts is `WARMUP_SECS=3` and `MEASURE_SECS=5`.
+
 ```bash
 rm -rf "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_rocks"
 mkdir -p "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_rocks"
