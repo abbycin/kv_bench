@@ -47,14 +47,16 @@ mkdir -p "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_r
 - Comparison unit: rows with identical `workload_id`, `threads`, `key_size`, `value_size`, `durability_mode`, `read_path`
 - Fairness rule for read-heavy workloads: `get`, `scan`, and `W1`-`W6` run one GC/compaction pass after prefill and before warmup/measurement, so RocksDB is not compared with GC artificially disabled while reads may have to touch multiple SSTs
 - Throughput metric: workload-level `ops_per_sec` (higher is better)
-  - `W1/W2/W3/W4`: mixed read+update throughput
-  - `W5`: mixed read+update+scan throughput
-  - `W6`: scan throughput (counted by scan requests, not scanned key count)
 - Tail latency metric: workload-level `p99_us` (lower is better)
-  - This is the mixed p99 of all operations executed in that workload row, not per-op-type p99
-  - `W1/W2/W3/W4`: mixed read+update p99
-  - `W5`: mixed read+update+scan p99
-  - `W6`: scan p99
+  - This is the workload-level p99 of all operations executed in that row, not per-op-type p99
+
+## Workloads
+- `W1`: `95%` read + `5%` update, uniform distribution
+- `W2`: `95%` read + `5%` update, Zipf distribution
+- `W3`: `50%` read + `50%` update, uniform distribution
+- `W4`: `5%` read + `95%` update, uniform distribution
+- `W5`: `70%` read + `25%` update + `5%` scan, uniform distribution
+- `W6`: `100%` scan, uniform distribution; throughput is counted by scan requests, not scanned key count
 
 Raw CSV path: `./scripts/benchmark_results.csv`
 

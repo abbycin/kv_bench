@@ -15,6 +15,11 @@ def main() -> int:
         default="./scripts/benchmark_results.csv",
         help="Path to benchmark CSV (default: ./scripts/benchmark_results.csv)",
     )
+    parser.add_argument(
+        "--filter-errors",
+        action="store_true",
+        help="Only compare rows with error_ops == 0 (default: include all rows)",
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv_path)
@@ -44,20 +49,28 @@ def main() -> int:
         "read_path",
     ]
 
-    ok = df[df["error_ops"] == 0].copy()
-    if ok.empty:
-        print("No rows with error_ops == 0, cannot compare.")
+    if args.filter_errors:
+        base = df[df["error_ops"] == 0].copy()
+    else:
+        base = df.copy()
+
+    if base.empty:
+        if args.filter_errors:
+            print("No rows with error_ops == 0, cannot compare.")
+        else:
+            print("No rows found in csv, cannot compare.")
         return 0
 
-    agg = ok.groupby(keys + ["engine"], as_index=False).agg(
+    agg = base.groupby(keys + ["engine"], as_index=False).agg(
         ops_per_sec=("ops_per_sec", "median"),
         p99_us=("p99_us", "median"),
+        error_ops=("error_ops", "median"),
     )
 
     piv = agg.pivot_table(
         index=keys,
         columns="engine",
-        values=["ops_per_sec", "p99_us"],
+        values=["ops_per_sec", "p99_us", "error_ops"],
         aggfunc="first",
     )
     piv.columns = [f"{metric}_{engine}" for metric, engine in piv.columns]
@@ -68,6 +81,8 @@ def main() -> int:
         "ops_per_sec_rocksdb",
         "p99_us_mace",
         "p99_us_rocksdb",
+        "error_ops_mace",
+        "error_ops_rocksdb",
     ]:
         if col not in out.columns:
             out[col] = pd.NA
