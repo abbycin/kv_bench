@@ -24,7 +24,7 @@ def main() -> int:
         "threads",
         "key_size",
         "value_size",
-        "ops_per_sec",
+        "ops",
         "p99_us",
     }
     missing = required - set(df.columns)
@@ -48,7 +48,7 @@ def main() -> int:
             if sub.empty:
                 continue
 
-            for metric, ylabel in (("ops_per_sec", "OPS/s"), ("p99_us", "P99 Latency (us)")):
+            for metric, ylabel in (("ops", "OPS/s"), ("p99_us", "P99 Latency (us)")):
                 plt.figure(figsize=(12, 7))
                 for workload in sorted(sub["workload_id"].unique()):
                     wdf = sub[sub["workload_id"] == workload].sort_values("threads")

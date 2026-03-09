@@ -25,7 +25,7 @@ def main() -> int:
         "key_size",
         "value_size",
         "threads",
-        "ops_per_sec",
+        "ops",
         "p99_us",
     }
     missing = needed - set(df.columns)
@@ -41,10 +41,10 @@ def main() -> int:
     agg = (
         sub.groupby(grp_cols)
         .agg(
-            repeats=("ops_per_sec", "count"),
-            throughput_cv=("ops_per_sec", cv),
+            repeats=("ops", "count"),
+            throughput_cv=("ops", cv),
             p99_cv=("p99_us", cv),
-            throughput_median=("ops_per_sec", "median"),
+            throughput_median=("ops", "median"),
             p99_median=("p99_us", "median"),
         )
         .reset_index()

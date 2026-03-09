@@ -218,8 +218,9 @@ struct ResultRow {
     warmup_secs: u64,
     measure_secs: u64,
     total_ops: u64,
-    error_ops: u64,
-    ops_per_sec: f64,
+    ok_ops: u64,
+    err_ops: u64,
+    ops: f64,
     quantiles: Quantiles,
     elapsed_us: u64,
     meta: MachineMeta,
@@ -228,7 +229,7 @@ struct ResultRow {
 #[derive(Clone, Debug)]
 struct ThreadStats {
     total_ops: u64,
-    error_ops: u64,
+    err_ops: u64,
     hist: [u64; LAT_BUCKETS],
 }
 
@@ -236,7 +237,7 @@ impl Default for ThreadStats {
     fn default() -> Self {
         Self {
             total_ops: 0,
-            error_ops: 0,
+            err_ops: 0,
             hist: [0; LAT_BUCKETS],
         }
     }
@@ -487,12 +488,12 @@ fn csv_escape(raw: &str) -> String {
 }
 
 fn result_header() -> &'static str {
-    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_ops,error_ops,ops_per_sec,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_cores,mem_total_kb,mem_available_kb"
+    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_ops,ok_ops,err_ops,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_cores,mem_total_kb,mem_available_kb"
 }
 
 fn result_row_csv(row: &ResultRow) -> String {
     format!(
-        "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{},{},{},{},{},{},{}",
         row.ts_epoch_ms,
         row.engine,
         csv_escape(&row.workload_id),
@@ -513,8 +514,9 @@ fn result_row_csv(row: &ResultRow) -> String {
         row.warmup_secs,
         row.measure_secs,
         row.total_ops,
-        row.error_ops,
-        row.ops_per_sec,
+        row.ok_ops,
+        row.err_ops,
+        row.ops,
         row.quantiles.p50_us,
         row.quantiles.p95_us,
         row.quantiles.p99_us,
@@ -712,7 +714,12 @@ fn main() {
     opt.cache_capacity = 3 << 30;
     opt.data_file_size = 64 << 20;
     opt.max_log_size = 1 << 30;
+    opt.wal_buffer_size = 64 << 20;
+    opt.wal_file_size = 128 << 20;
     opt.default_arenas = 128;
+    opt.gc_timeout = 600 * 1000;
+    opt.gc_eager = false;
+    opt.data_garbage_ratio = 50;
     opt.tmp_store = cleanup;
 
     let db = Mace::new(opt.validate().unwrap()).unwrap();
@@ -926,12 +933,12 @@ fn main() {
 
     let mut merged_hist = [0u64; LAT_BUCKETS];
     let mut total_ops = 0u64;
-    let mut error_ops = 0u64;
+    let mut err_ops = 0u64;
 
     for h in handles {
         let s = h.join().unwrap();
         total_ops += s.total_ops;
-        error_ops += s.error_ops;
+        err_ops += s.err_ops;
         for (i, v) in s.hist.iter().enumerate() {
             merged_hist[i] += *v;
         }
@@ -940,11 +947,13 @@ fn main() {
     let measure_end = Instant::now();
     let measure_started = (*measure_start.lock().unwrap()).unwrap_or(measure_end);
     let elapsed_us = measure_end.duration_since(measure_started).as_micros() as u64;
-    let ops_per_sec = if elapsed_us == 0 {
+    let ops = if elapsed_us == 0 {
         0.0
     } else {
         (total_ops as f64) * 1_000_000.0 / (elapsed_us as f64)
     };
+
+    let ok_ops = total_ops.saturating_sub(err_ops);
 
     let quantiles = Quantiles {
         p50_us: histogram_quantile_us(&merged_hist, 0.50),
@@ -974,8 +983,9 @@ fn main() {
         warmup_secs: effective_warmup_secs,
         measure_secs: effective_measure_secs,
         total_ops,
-        error_ops,
-        ops_per_sec,
+        ok_ops,
+        err_ops,
+        ops,
         quantiles,
         elapsed_us,
         meta: gather_machine_meta(),
@@ -987,14 +997,15 @@ fn main() {
     }
 
     println!(
-        "engine=mace workload={} mode={} durability={} threads={} ops={} err={} qps={:.2} p99_us={} result_file={}",
+        "engine=mace workload={} mode={} durability={} threads={} total_ops={} ok_ops={} err_ops={} ops={:.2} p99_us={} result_file={}",
         row.workload_id,
         row.mode,
         row.durability_mode.as_str(),
         row.threads,
         row.total_ops,
-        row.error_ops,
-        row.ops_per_sec,
+        row.ok_ops,
+        row.err_ops,
+        row.ops,
         row.quantiles.p99_us,
         args.result_file
     );
@@ -1159,7 +1170,7 @@ fn run_one_op(
     if let Some(stats) = stats {
         stats.total_ops += 1;
         if !ok {
-            stats.error_ops += 1;
+            stats.err_ops += 1;
         }
         if let Some(start) = start {
             let us = start.elapsed().as_micros() as u64;

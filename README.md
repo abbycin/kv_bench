@@ -46,7 +46,7 @@ mkdir -p "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_r
 ## What Is Compared
 - Comparison unit: rows with identical `workload_id`, `threads`, `key_size`, `value_size`, `durability_mode`, `read_path`
 - Fairness rule for read-heavy workloads: `get`, `scan`, and `W1`-`W6` run one GC/compaction pass after prefill and before warmup/measurement, so RocksDB is not compared with GC artificially disabled while reads may have to touch multiple SSTs
-- Throughput metric: workload-level `ops_per_sec` (higher is better)
+- Throughput metric: workload-level `ops` (higher is better)
 - Tail latency metric: workload-level `p99_us` (lower is better)
   - This is the workload-level p99 of all operations executed in that row, not per-op-type p99
 

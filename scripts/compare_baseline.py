@@ -18,7 +18,7 @@ def main() -> int:
     parser.add_argument(
         "--filter-errors",
         action="store_true",
-        help="Only compare rows with error_ops == 0 (default: include all rows)",
+        help="Only compare rows with err_ops == 0 (default: include all rows)",
     )
     args = parser.parse_args()
 
@@ -32,9 +32,9 @@ def main() -> int:
         "value_size",
         "durability_mode",
         "read_path",
-        "ops_per_sec",
+        "ops",
         "p99_us",
-        "error_ops",
+        "err_ops",
     }
     missing = required - set(df.columns)
     if missing:
@@ -50,45 +50,45 @@ def main() -> int:
     ]
 
     if args.filter_errors:
-        base = df[df["error_ops"] == 0].copy()
+        base = df[df["err_ops"] == 0].copy()
     else:
         base = df.copy()
 
     if base.empty:
         if args.filter_errors:
-            print("No rows with error_ops == 0, cannot compare.")
+            print("No rows with err_ops == 0, cannot compare.")
         else:
             print("No rows found in csv, cannot compare.")
         return 0
 
     agg = base.groupby(keys + ["engine"], as_index=False).agg(
-        ops_per_sec=("ops_per_sec", "median"),
+        ops=("ops", "median"),
         p99_us=("p99_us", "median"),
-        error_ops=("error_ops", "median"),
+        err_ops=("err_ops", "median"),
     )
 
     piv = agg.pivot_table(
         index=keys,
         columns="engine",
-        values=["ops_per_sec", "p99_us", "error_ops"],
+        values=["ops", "p99_us", "err_ops"],
         aggfunc="first",
     )
     piv.columns = [f"{metric}_{engine}" for metric, engine in piv.columns]
     out = piv.reset_index()
 
     for col in [
-        "ops_per_sec_mace",
-        "ops_per_sec_rocksdb",
+        "ops_mace",
+        "ops_rocksdb",
         "p99_us_mace",
         "p99_us_rocksdb",
-        "error_ops_mace",
-        "error_ops_rocksdb",
+        "err_ops_mace",
+        "err_ops_rocksdb",
     ]:
         if col not in out.columns:
             out[col] = pd.NA
 
     out["qps_ratio_mace_over_rocksdb"] = (
-        out["ops_per_sec_mace"] / out["ops_per_sec_rocksdb"]
+        out["ops_mace"] / out["ops_rocksdb"]
     )
     out["p99_ratio_mace_over_rocksdb"] = out["p99_us_mace"] / out["p99_us_rocksdb"]
     out = out.sort_values(keys)

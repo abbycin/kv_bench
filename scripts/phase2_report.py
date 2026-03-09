@@ -32,7 +32,7 @@ def main() -> int:
         "value_size",
         "prefill_keys",
         "threads",
-        "ops_per_sec",
+        "ops",
         "p95_us",
         "p99_us",
     }
@@ -51,8 +51,8 @@ def main() -> int:
     summary = (
         sub.groupby(grp_cols)
         .agg(
-            repeats=("ops_per_sec", "count"),
-            throughput_median=("ops_per_sec", "median"),
+            repeats=("ops", "count"),
+            throughput_median=("ops", "median"),
             p95_median=("p95_us", "median"),
             p99_median=("p99_us", "median"),
         )

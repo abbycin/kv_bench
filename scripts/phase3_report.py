@@ -17,7 +17,7 @@ def main() -> int:
         "workload_id",
         "threads",
         "durability_mode",
-        "ops_per_sec",
+        "ops",
         "p99_us",
     }
     missing = needed - set(df.columns)
@@ -39,8 +39,8 @@ def main() -> int:
     base = (
         sub.groupby(["engine", "workload_id", "threads", "durability_mode"])
         .agg(
-            repeats=("ops_per_sec", "count"),
-            throughput_median=("ops_per_sec", "median"),
+            repeats=("ops", "count"),
+            throughput_median=("ops", "median"),
             p99_median=("p99_us", "median"),
         )
         .reset_index()

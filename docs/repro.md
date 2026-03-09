@@ -177,9 +177,9 @@ Unified schema columns include:
 - `workload_id` (`W1..W6`)
 - `durability_mode` (`relaxed` / `durable`)
 - `threads,key_size,value_size,prefill_keys`
-- `ops_per_sec`
+- `ops`
+- `total_ops,ok_ops,err_ops`
 - `p50_us,p95_us,p99_us,p999_us`
-- `error_ops`
 - `read_path`
 
 ## 7. Report Commands
@@ -207,4 +207,4 @@ Only compare rows with identical:
 - `read_path`
 - read-heavy workload rows are expected to include the pre-run GC/compaction pass described above
 
-If `error_ops > 0`, investigate that case before drawing conclusions.
+If `err_ops > 0`, investigate that case before drawing conclusions.

@@ -180,7 +180,7 @@ def plot_results(
     thread_points: Sequence[int],
 ) -> list[Path]:
     df = pd.read_csv(result_csv)
-    required = {"engine", "mode", "threads", "key_size", "value_size", "ops_per_sec"}
+    required = {"engine", "mode", "threads", "key_size", "value_size", "ops"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns in csv: {sorted(missing)}")
@@ -191,7 +191,7 @@ def plot_results(
 
     grouped = (
         df.groupby(["engine", "mode", "key_size", "value_size", "threads"], as_index=False)[
-            "ops_per_sec"
+            "ops"
         ]
         .mean()
         .sort_values(["engine", "mode", "key_size", "value_size", "threads"])
@@ -209,7 +209,7 @@ def plot_results(
             continue
 
         plt.figure(figsize=(16, 10))
-        y_max = float(mode_df["ops_per_sec"].max()) if not mode_df.empty else 0.0
+        y_max = float(mode_df["ops"].max()) if not mode_df.empty else 0.0
 
         for engine in ENGINE_ORDER:
             for key_size, value_size in KV_PROFILES:
@@ -222,7 +222,7 @@ def plot_results(
                     continue
 
                 x = sub["threads"].tolist()
-                y = sub["ops_per_sec"].tolist()
+                y = sub["ops"].tolist()
                 label = (
                     f"{engine} ({format_bytes(key_size)}/{format_bytes(value_size)})"
                 )
