@@ -1110,7 +1110,11 @@ fn run_one_op(
 
             if let Some(key) = key_opt {
                 if let Ok(tx) = bucket.begin() {
-                    let write_ok = tx.upsert(key.as_slice(), value.as_slice()).is_ok();
+                    let write_ok = if spec.insert_only {
+                        tx.upsert(key.as_slice(), value.as_slice()).is_ok()
+                    } else {
+                        tx.update(key.as_slice(), value.as_slice()).is_ok()
+                    };
                     if !write_ok {
                         false
                     } else {

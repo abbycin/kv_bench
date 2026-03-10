@@ -560,6 +560,8 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
         }
 
         auto *txn = db->BeginTransaction(wopt);
+        txn->SetSnapshot();
+        ropt.snapshot = txn->GetSnapshot();
         auto st = txn->Get(ropt, handle, key, &out);
         auto cst = txn->Commit();
         delete txn;
@@ -597,6 +599,21 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
         }
 
         auto *txn = db->BeginTransaction(wopt);
+        if (spec.insert_only) {
+            auto pst = txn->Put(handle, key.value(), value);
+            auto cst = txn->Commit();
+            delete txn;
+            return pst.ok() && cst.ok();
+        }
+
+        rocksdb::ReadOptions update_ropt;
+        txn->SetSnapshot();
+        update_ropt.snapshot = txn->GetSnapshot();
+        auto gst = txn->GetForUpdate(update_ropt, handle, key.value(), static_cast<std::string *>(nullptr));
+        if (!gst.ok()) {
+            delete txn;
+            return false;
+        }
         auto pst = txn->Put(handle, key.value(), value);
         auto cst = txn->Commit();
         delete txn;
@@ -641,6 +658,8 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
     }
 
     auto *txn = db->BeginTransaction(wopt);
+    txn->SetSnapshot();
+    ropt.snapshot = txn->GetSnapshot();
     auto *iter = txn->GetIterator(ropt);
     iter->Seek(prefix.value());
     size_t scanned = 0;
