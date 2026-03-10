@@ -73,7 +73,6 @@ run_case() {
           --prefill-keys "${prefill_keys}" \
           --warmup-secs "${warmup_secs}" \
           --measure-secs "${measure_secs}" \
-          --shared-keyspace \
           --read-path "${read_path}" \
           --durability "${durability}" \
           --result-file "${result_file}"

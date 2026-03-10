@@ -66,7 +66,6 @@ run_cmd() {
               --prefill-keys "${prefill_keys}" \
               --warmup-secs "${warmup_secs}" \
               --measure-secs "${measure_secs}" \
-              --shared-keyspace \
               --no-cleanup \
               --read-path "${read_path}" \
               --durability "${durability}" \
@@ -83,7 +82,6 @@ run_cmd() {
               --prefill-keys "${prefill_keys}" \
               --warmup-secs "${warmup_secs}" \
               --measure-secs "${measure_secs}" \
-              --shared-keyspace \
               --no-cleanup \
               --read-path "${read_path}" \
               --durability "${durability}" \
@@ -142,7 +140,6 @@ start_run_bg() {
               --prefill-keys "${prefill_keys}" \
               --warmup-secs "${warmup_secs}" \
               --measure-secs "${measure_secs}" \
-              --shared-keyspace \
               --no-cleanup \
               --read-path "${read_path}" \
               --durability "${durability}" \
@@ -159,7 +156,6 @@ start_run_bg() {
               --prefill-keys "${prefill_keys}" \
               --warmup-secs "${warmup_secs}" \
               --measure-secs "${measure_secs}" \
-              --shared-keyspace \
               --no-cleanup \
               --read-path "${read_path}" \
               --durability "${durability}" \
