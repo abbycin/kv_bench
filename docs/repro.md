@@ -178,7 +178,7 @@ Unified schema columns include:
 - `durability_mode` (`relaxed` / `durable`)
 - `threads,key_size,value_size,prefill_keys`
 - `ops`
-- `total_ops,ok_ops,err_ops`
+- `total_op,ok_op,err_op`
 - `p50_us,p95_us,p99_us,p999_us`
 - `read_path`
 
@@ -207,4 +207,4 @@ Only compare rows with identical:
 - `read_path`
 - read-heavy workload rows are expected to include the pre-run GC/compaction pass described above
 
-If `err_ops > 0`, investigate that case before drawing conclusions.
+If `err_op > 0`, investigate that case before drawing conclusions.

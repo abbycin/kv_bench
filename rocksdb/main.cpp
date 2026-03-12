@@ -136,8 +136,8 @@ struct Quantiles {
 };
 
 struct ThreadStats {
-    uint64_t total_ops = 0;
-    uint64_t err_ops = 0;
+    uint64_t total_op = 0;
+    uint64_t err_op = 0;
     std::array<uint64_t, kLatencyBuckets> hist{};
 };
 
@@ -160,9 +160,9 @@ struct ResultRow {
     ReadPath read_path;
     uint64_t warmup_secs;
     uint64_t measure_secs;
-    uint64_t total_ops;
-    uint64_t ok_ops;
-    uint64_t err_ops;
+    uint64_t total_op;
+    uint64_t ok_op;
+    uint64_t err_op;
     double ops;
     Quantiles quantiles;
     uint64_t elapsed_us;
@@ -440,7 +440,7 @@ static std::string csv_escape(const std::string &v) {
 static const char *result_header() {
     return "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_"
            "keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,"
-           "measure_secs,total_ops,ok_ops,err_ops,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_"
+           "measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_"
            "cores,mem_total_kb,mem_available_kb";
 }
 
@@ -450,8 +450,8 @@ static std::string result_row_csv(const ResultRow &r) {
                        r.ts_epoch_ms, "rocksdb", csv_escape(r.workload_id), csv_escape(r.mode),
                        durability_str(r.durability_mode), r.threads, r.key_size, r.value_size, r.prefill_keys,
                        r.shared_keyspace, distribution_str(r.distribution), r.zipf_theta, r.read_pct, r.update_pct,
-                       r.scan_pct, r.scan_len, read_path_str(r.read_path), r.warmup_secs, r.measure_secs, r.total_ops,
-                       r.ok_ops, r.err_ops, static_cast<uint64_t>(r.ops), r.quantiles.p50_us, r.quantiles.p95_us,
+                       r.scan_pct, r.scan_len, read_path_str(r.read_path), r.warmup_secs, r.measure_secs, r.total_op,
+                       r.ok_op, r.err_op, static_cast<uint64_t>(r.ops), r.quantiles.p50_us, r.quantiles.p95_us,
                        r.quantiles.p99_us, r.quantiles.p999_us, r.elapsed_us, csv_escape(r.meta.host),
                        csv_escape(r.meta.os), csv_escape(r.meta.arch), csv_escape(r.meta.kernel), r.meta.cpu_cores,
                        r.meta.mem_total_kb, r.meta.mem_available_kb);
@@ -897,9 +897,9 @@ int main(int argc, char *argv[]) {
             mark_measure_start();
 
             auto record = [&](bool ok, uint64_t us) {
-                stats.total_ops += 1;
+                stats.total_op += 1;
                 if (!ok) {
-                    stats.err_ops += 1;
+                    stats.err_op += 1;
                 }
                 auto b = latency_bucket(us);
                 stats.hist[b] += 1;
@@ -954,21 +954,21 @@ int main(int argc, char *argv[]) {
         measure_begin_ns = measure_end_ns;
     }
     uint64_t elapsed_us = (measure_end_ns - measure_begin_ns) / 1000;
-    uint64_t total_ops = 0;
-    uint64_t err_ops = 0;
+    uint64_t total_op = 0;
+    uint64_t err_op = 0;
     std::array<uint64_t, kLatencyBuckets> merged_hist{};
 
     for (const auto &s: thread_stats) {
-        total_ops += s.total_ops;
-        err_ops += s.err_ops;
+        total_op += s.total_op;
+        err_op += s.err_op;
         for (size_t i = 0; i < merged_hist.size(); ++i) {
             merged_hist[i] += s.hist[i];
         }
     }
 
-    auto ops = elapsed_us == 0 ? 0.0 : (static_cast<double>(total_ops) * 1'000'000.0 / static_cast<double>(elapsed_us));
+    auto ops = elapsed_us == 0 ? 0.0 : (static_cast<double>(total_op) * 1'000'000.0 / static_cast<double>(elapsed_us));
 
-    uint64_t ok_ops = total_ops >= err_ops ? (total_ops - err_ops) : 0;
+    uint64_t ok_op = total_op >= err_op ? (total_op - err_op) : 0;
 
     auto row = ResultRow{
             .ts_epoch_ms = now_epoch_ms(),
@@ -989,9 +989,9 @@ int main(int argc, char *argv[]) {
             .read_path = read_path.value(),
             .warmup_secs = effective_warmup_secs,
             .measure_secs = effective_measure_secs,
-            .total_ops = total_ops,
-            .ok_ops = ok_ops,
-            .err_ops = err_ops,
+            .total_op = total_op,
+            .ok_op = ok_op,
+            .err_op = err_op,
             .ops = ops,
             .quantiles =
                     Quantiles{
@@ -1010,9 +1010,9 @@ int main(int argc, char *argv[]) {
     }
 
     fmt::println(
-            "engine=rocksdb workload={} mode={} durability={} threads={} ops={} err={} qps={} p99_us={} result_file={}",
-            row.workload_id, row.mode, durability_str(row.durability_mode), row.threads, row.total_ops, row.err_ops,
-            static_cast<uint64_t>(row.ops), row.quantiles.p99_us, args.result_file);
+            "engine=rocksdb workload={} mode={} durability={} threads={} total_op={} ok_op={} err_op={} ops={} p99_us={} result_file={}",
+            row.workload_id, row.mode, durability_str(row.durability_mode), row.threads, row.total_op, row.ok_op,
+            row.err_op, static_cast<uint64_t>(row.ops), row.quantiles.p99_us, args.result_file);
 
     delete handle;
     delete db;

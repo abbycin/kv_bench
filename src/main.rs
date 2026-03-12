@@ -217,9 +217,9 @@ struct ResultRow {
     read_path: ReadPath,
     warmup_secs: u64,
     measure_secs: u64,
-    total_ops: u64,
-    ok_ops: u64,
-    err_ops: u64,
+    total_op: u64,
+    ok_op: u64,
+    err_op: u64,
     ops: f64,
     quantiles: Quantiles,
     elapsed_us: u64,
@@ -228,16 +228,16 @@ struct ResultRow {
 
 #[derive(Clone, Debug)]
 struct ThreadStats {
-    total_ops: u64,
-    err_ops: u64,
+    total_op: u64,
+    err_op: u64,
     hist: [u64; LAT_BUCKETS],
 }
 
 impl Default for ThreadStats {
     fn default() -> Self {
         Self {
-            total_ops: 0,
-            err_ops: 0,
+            total_op: 0,
+            err_op: 0,
             hist: [0; LAT_BUCKETS],
         }
     }
@@ -488,7 +488,7 @@ fn csv_escape(raw: &str) -> String {
 }
 
 fn result_header() -> &'static str {
-    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_ops,ok_ops,err_ops,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_cores,mem_total_kb,mem_available_kb"
+    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_cores,mem_total_kb,mem_available_kb"
 }
 
 fn result_row_csv(row: &ResultRow) -> String {
@@ -513,9 +513,9 @@ fn result_row_csv(row: &ResultRow) -> String {
         row.read_path.as_str(),
         row.warmup_secs,
         row.measure_secs,
-        row.total_ops,
-        row.ok_ops,
-        row.err_ops,
+        row.total_op,
+        row.ok_op,
+        row.err_op,
         row.ops,
         row.quantiles.p50_us,
         row.quantiles.p95_us,
@@ -932,13 +932,13 @@ fn main() {
     }
 
     let mut merged_hist = [0u64; LAT_BUCKETS];
-    let mut total_ops = 0u64;
-    let mut err_ops = 0u64;
+    let mut total_op = 0u64;
+    let mut err_op = 0u64;
 
     for h in handles {
         let s = h.join().unwrap();
-        total_ops += s.total_ops;
-        err_ops += s.err_ops;
+        total_op += s.total_op;
+        err_op += s.err_op;
         for (i, v) in s.hist.iter().enumerate() {
             merged_hist[i] += *v;
         }
@@ -950,10 +950,10 @@ fn main() {
     let ops = if elapsed_us == 0 {
         0.0
     } else {
-        (total_ops as f64) * 1_000_000.0 / (elapsed_us as f64)
+        (total_op as f64) * 1_000_000.0 / (elapsed_us as f64)
     };
 
-    let ok_ops = total_ops.saturating_sub(err_ops);
+    let ok_op = total_op.saturating_sub(err_op);
 
     let quantiles = Quantiles {
         p50_us: histogram_quantile_us(&merged_hist, 0.50),
@@ -982,9 +982,9 @@ fn main() {
         read_path,
         warmup_secs: effective_warmup_secs,
         measure_secs: effective_measure_secs,
-        total_ops,
-        ok_ops,
-        err_ops,
+        total_op,
+        ok_op,
+        err_op,
         ops,
         quantiles,
         elapsed_us,
@@ -997,14 +997,14 @@ fn main() {
     }
 
     println!(
-        "engine=mace workload={} mode={} durability={} threads={} total_ops={} ok_ops={} err_ops={} ops={:.2} p99_us={} result_file={}",
+        "engine=mace workload={} mode={} durability={} threads={} total_op={} ok_op={} err_op={} ops={:.2} p99_us={} result_file={}",
         row.workload_id,
         row.mode,
         row.durability_mode.as_str(),
         row.threads,
-        row.total_ops,
-        row.ok_ops,
-        row.err_ops,
+        row.total_op,
+        row.ok_op,
+        row.err_op,
         row.ops,
         row.quantiles.p99_us,
         args.result_file
@@ -1172,9 +1172,9 @@ fn run_one_op(
     };
 
     if let Some(stats) = stats {
-        stats.total_ops += 1;
+        stats.total_op += 1;
         if !ok {
-            stats.err_ops += 1;
+            stats.err_op += 1;
         }
         if let Some(start) = start {
             let us = start.elapsed().as_micros() as u64;
