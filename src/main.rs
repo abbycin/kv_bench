@@ -716,7 +716,7 @@ fn main() {
     opt.max_log_size = 1 << 30;
     opt.wal_buffer_size = 64 << 20;
     opt.wal_file_size = 128 << 20;
-    opt.default_arenas = 128;
+    opt.default_arenas = 16;
     opt.gc_timeout = 600 * 1000;
     opt.gc_eager = false;
     opt.data_garbage_ratio = 50;

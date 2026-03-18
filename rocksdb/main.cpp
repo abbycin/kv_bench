@@ -779,7 +779,7 @@ int main(int argc, char *argv[]) {
     cfo.min_blob_size = args.blob_size;
     cfo.disable_auto_compactions = true;
     cfo.write_buffer_size = 64 << 20;
-    cfo.max_write_buffer_number = 128;
+    cfo.max_write_buffer_number = 16;
 
     auto cache = rocksdb::NewLRUCache(3 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
@@ -1009,10 +1009,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    fmt::println(
-            "engine=rocksdb workload={} mode={} durability={} threads={} total_op={} ok_op={} err_op={} ops={} p99_us={} result_file={}",
-            row.workload_id, row.mode, durability_str(row.durability_mode), row.threads, row.total_op, row.ok_op,
-            row.err_op, static_cast<uint64_t>(row.ops), row.quantiles.p99_us, args.result_file);
+    fmt::println("engine=rocksdb workload={} mode={} durability={} threads={} total_op={} ok_op={} err_op={} ops={} "
+                 "p99_us={} result_file={}",
+                 row.workload_id, row.mode, durability_str(row.durability_mode), row.threads, row.total_op, row.ok_op,
+                 row.err_op, static_cast<uint64_t>(row.ops), row.quantiles.p99_us, args.result_file);
 
     delete handle;
     delete db;
