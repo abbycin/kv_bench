@@ -711,13 +711,12 @@ fn main() {
     let mut opt = Options::new(path);
     opt.sync_on_write = durability_mode == DurabilityMode::Durable;
     opt.inline_size = args.blob_size;
-    opt.cache_capacity = 3 << 30;
-    opt.data_file_size = 64 << 20;
-    opt.max_log_size = 1 << 30;
-    opt.wal_buffer_size = 64 << 20;
-    opt.wal_file_size = 128 << 20;
-    opt.default_arenas = 16;
-    opt.gc_timeout = 600 * 1000;
+    opt.checkpoint_size = 128 << 20;
+    opt.cache_capacity = 1 << 30;
+    opt.lru_capacity = 1 << 30;
+    opt.pool_capacity = 1 << 30;
+    opt.enable_backpressure = true;
+    opt.gc_timeout = 5 * 1000;
     opt.gc_eager = false;
     opt.data_garbage_ratio = 50;
     opt.tmp_store = cleanup;
@@ -770,7 +769,6 @@ fn main() {
 
     if workload_runs_gc(&workload) {
         db.enable_gc();
-        db.start_gc();
     }
 
     let op_counts = split_ranges(args.iterations, args.threads);
@@ -851,7 +849,7 @@ fn main() {
                 {
                     let now = Instant::now();
                     let mut slot = measure_start_slot.lock().unwrap();
-                    if slot.map_or(true, |prev| now < prev) {
+                    if slot.map_or_else(|| true, |prev| now < prev) {
                         *slot = Some(now);
                     }
                 }
@@ -926,7 +924,7 @@ fn main() {
     {
         let now = Instant::now();
         let mut slot = measure_start.lock().unwrap();
-        if slot.map_or(true, |prev| now < prev) {
+        if slot.map_or_else(|| true, |prev| now < prev) {
             *slot = Some(now);
         }
     }

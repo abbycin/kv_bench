@@ -288,13 +288,6 @@ static bool workload_runs_gc(const WorkloadSpec &spec) { return spec.requires_pr
 
 static void run_prefill_gc(rocksdb::OptimisticTransactionDB *db, rocksdb::ColumnFamilyHandle *handle) {
     require_ok(db->EnableAutoCompaction({handle}), "enable auto compaction");
-
-    rocksdb::FlushOptions flush_options;
-    flush_options.wait = true;
-    require_ok(db->Flush(flush_options, handle), "prefill flush");
-
-    rocksdb::CompactRangeOptions compact_options;
-    require_ok(db->CompactRange(compact_options, handle, nullptr, nullptr), "prefill compaction");
 }
 
 static std::vector<ThreadRange> split_ranges(size_t total, size_t n) {
@@ -555,7 +548,10 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
         std::string out;
 
         if (read_path == ReadPath::Snapshot) {
+            auto *snapshot = db->GetSnapshot();
+            ropt.snapshot = snapshot;
             auto st = db->Get(ropt, handle, key, &out);
+            db->ReleaseSnapshot(snapshot);
             return st.ok();
         }
 
@@ -643,6 +639,8 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
     auto scan_limit = std::max<size_t>(scan_len, 1);
 
     if (read_path == ReadPath::Snapshot) {
+        auto *snapshot = db->GetSnapshot();
+        ropt.snapshot = snapshot;
         auto *iter = db->NewIterator(ropt, handle);
         iter->Seek(prefix.value());
         size_t scanned = 0;
@@ -654,6 +652,7 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
         }
         auto st = iter->status();
         delete iter;
+        db->ReleaseSnapshot(snapshot);
         return st.ok();
     }
 
