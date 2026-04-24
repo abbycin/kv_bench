@@ -27,7 +27,6 @@
 #include <rocksdb/utilities/transaction.h>
 
 #include <pthread.h>
-#include <sys/utsname.h>
 #include <unistd.h>
 
 #include "CLI/CLI.hpp"
@@ -118,16 +117,6 @@ struct ThreadRange {
     size_t len;
 };
 
-struct MachineMeta {
-    std::string host;
-    std::string os;
-    std::string arch;
-    std::string kernel;
-    size_t cpu_cores;
-    uint64_t mem_total_kb;
-    uint64_t mem_available_kb;
-};
-
 struct Quantiles {
     uint64_t p50_us = 0;
     uint64_t p95_us = 0;
@@ -166,7 +155,6 @@ struct ResultRow {
     double ops;
     Quantiles quantiles;
     uint64_t elapsed_us;
-    MachineMeta meta;
 };
 
 enum class OpKind {
@@ -377,49 +365,6 @@ static uint64_t steady_now_ns() {
     return static_cast<uint64_t>(ns.count());
 }
 
-static uint64_t read_mem_kb(const char *key) {
-    std::ifstream in("/proc/meminfo");
-    if (!in.is_open()) {
-        return 0;
-    }
-    std::string k;
-    uint64_t val = 0;
-    std::string unit;
-    while (in >> k >> val >> unit) {
-        if (k == key) {
-            return val;
-        }
-    }
-    return 0;
-}
-
-static MachineMeta gather_machine_meta() {
-    char host_buf[256] = {0};
-    if (::gethostname(host_buf, sizeof(host_buf) - 1) != 0) {
-        std::snprintf(host_buf, sizeof(host_buf), "unknown");
-    }
-
-    struct utsname uts{};
-    std::string kernel = "unknown";
-    std::string os = "unknown";
-    std::string arch = "unknown";
-    if (::uname(&uts) == 0) {
-        kernel = uts.release;
-        os = uts.sysname;
-        arch = uts.machine;
-    }
-
-    return MachineMeta{
-            .host = host_buf,
-            .os = os,
-            .arch = arch,
-            .kernel = kernel,
-            .cpu_cores = cores_online(),
-            .mem_total_kb = read_mem_kb("MemTotal:"),
-            .mem_available_kb = read_mem_kb("MemAvailable:"),
-    };
-}
-
 static std::string csv_escape(const std::string &v) {
     std::string out = v;
     for (auto &c: out) {
@@ -433,21 +378,17 @@ static std::string csv_escape(const std::string &v) {
 static const char *result_header() {
     return "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_"
            "keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,"
-           "measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_"
-           "cores,mem_total_kb,mem_available_kb";
+           "measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us";
 }
 
 static std::string result_row_csv(const ResultRow &r) {
-    return fmt::format("v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}"
-                       ",{},{},{},{}",
+    return fmt::format("v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                        r.ts_epoch_ms, "rocksdb", csv_escape(r.workload_id), csv_escape(r.mode),
                        durability_str(r.durability_mode), r.threads, r.key_size, r.value_size, r.prefill_keys,
                        r.shared_keyspace, distribution_str(r.distribution), r.zipf_theta, r.read_pct, r.update_pct,
                        r.scan_pct, r.scan_len, read_path_str(r.read_path), r.warmup_secs, r.measure_secs, r.total_op,
                        r.ok_op, r.err_op, static_cast<uint64_t>(r.ops), r.quantiles.p50_us, r.quantiles.p95_us,
-                       r.quantiles.p99_us, r.quantiles.p999_us, r.elapsed_us, csv_escape(r.meta.host),
-                       csv_escape(r.meta.os), csv_escape(r.meta.arch), csv_escape(r.meta.kernel), r.meta.cpu_cores,
-                       r.meta.mem_total_kb, r.meta.mem_available_kb);
+                       r.quantiles.p99_us, r.quantiles.p999_us, r.elapsed_us);
 }
 
 static bool append_result_row(const std::string &path, const ResultRow &row) {
@@ -1000,7 +941,6 @@ int main(int argc, char *argv[]) {
                             .p999_us = histogram_quantile_us(merged_hist, 0.999),
                     },
             .elapsed_us = elapsed_us,
-            .meta = gather_machine_meta(),
     };
 
     if (!append_result_row(args.result_file, row)) {

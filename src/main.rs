@@ -177,17 +177,6 @@ struct ThreadRange {
     len: usize,
 }
 
-#[derive(Clone, Debug)]
-struct MachineMeta {
-    host: String,
-    os: String,
-    arch: String,
-    kernel: String,
-    cpu_cores: usize,
-    mem_total_kb: u64,
-    mem_available_kb: u64,
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 struct Quantiles {
     p50_us: u64,
@@ -223,7 +212,6 @@ struct ResultRow {
     ops: f64,
     quantiles: Quantiles,
     elapsed_us: u64,
-    meta: MachineMeta,
 }
 
 #[derive(Clone, Debug)]
@@ -439,61 +427,17 @@ fn now_epoch_ms() -> u128 {
         .as_millis()
 }
 
-fn read_proc_value_kb(key: &str) -> u64 {
-    let Ok(content) = std::fs::read_to_string("/proc/meminfo") else {
-        return 0;
-    };
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix(key) {
-            let num = rest
-                .split_whitespace()
-                .next()
-                .unwrap_or("0")
-                .parse::<u64>()
-                .unwrap_or(0);
-            return num;
-        }
-    }
-    0
-}
-
-fn gather_machine_meta() -> MachineMeta {
-    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("HOSTNAME").ok())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    MachineMeta {
-        host,
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        kernel,
-        cpu_cores: std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1),
-        mem_total_kb: read_proc_value_kb("MemTotal:"),
-        mem_available_kb: read_proc_value_kb("MemAvailable:"),
-    }
-}
-
 fn csv_escape(raw: &str) -> String {
     raw.replace([',', '\n', '\r'], " ")
 }
 
 fn result_header() -> &'static str {
-    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us,host,os,arch,kernel,cpu_cores,mem_total_kb,mem_available_kb"
+    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us"
 }
 
 fn result_row_csv(row: &ResultRow) -> String {
     format!(
-        "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{}",
         row.ts_epoch_ms,
         row.engine,
         csv_escape(&row.workload_id),
@@ -522,13 +466,6 @@ fn result_row_csv(row: &ResultRow) -> String {
         row.quantiles.p99_us,
         row.quantiles.p999_us,
         row.elapsed_us,
-        csv_escape(&row.meta.host),
-        csv_escape(&row.meta.os),
-        csv_escape(&row.meta.arch),
-        csv_escape(&row.meta.kernel),
-        row.meta.cpu_cores,
-        row.meta.mem_total_kb,
-        row.meta.mem_available_kb,
     )
 }
 
@@ -986,7 +923,6 @@ fn main() {
         ops,
         quantiles,
         elapsed_us,
-        meta: gather_machine_meta(),
     };
 
     if let Err(e) = append_result_row(&args.result_file, &row) {
