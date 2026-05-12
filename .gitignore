@@ -17,3 +17,4 @@ __pycache__
 *.md
 !README.md
 !repro.md
+*.html

@@ -16,9 +16,9 @@ rocksdb_dir="${root_dir}/rocksdb"
 db_root="$1"
 result_file="${2:-${script_dir}/benchmark_results.csv}"
 
-warmup_secs="${WARMUP_SECS:-3}"
-measure_secs="${MEASURE_SECS:-5}"
-prefill_keys="${PREFILL_KEYS:-200000}"
+warmup_secs="${WARMUP_SECS:-0}"
+measure_secs="${MEASURE_SECS:-10}"
+prefill_keys="${PREFILL_KEYS:-1000000}"
 read_path="${READ_PATH:-snapshot}"
 
 mkdir -p "${db_root}"
@@ -59,6 +59,7 @@ for workload in "${workloads[@]}"; do
               --measure-secs "${measure_secs}" \
               --read-path "${read_path}" \
               --result-file "${result_file}"
+            sleep 20
         done
     done
 done

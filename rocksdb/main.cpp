@@ -717,11 +717,10 @@ int main(int argc, char *argv[]) {
     rocksdb::ColumnFamilyOptions cfo{};
     cfo.enable_blob_files = true;
     cfo.min_blob_size = args.blob_size;
-    cfo.disable_auto_compactions = true;
     cfo.write_buffer_size = 64 << 20;
     cfo.max_write_buffer_number = 16;
 
-    auto cache = rocksdb::NewLRUCache(3 << 30);
+    auto cache = rocksdb::NewLRUCache(4 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
     table_options.block_cache = cache;
     cfo.table_factory.reset(NewBlockBasedTableFactory(table_options));
@@ -735,8 +734,6 @@ int main(int argc, char *argv[]) {
     options.enable_pipelined_write = true;
 
     auto wopt = rocksdb::WriteOptions();
-    // allow backpressure under heavy write load so throughput reflects completed operations
-    // instead of inflating qps with fast-failed requests
     wopt.no_slowdown = false;
     wopt.sync = (durability.value() == DurabilityMode::Durable);
 

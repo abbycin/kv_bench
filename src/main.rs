@@ -647,11 +647,12 @@ fn main() {
 
     let mut opt = Options::new(path);
     opt.sync_on_write = durability_mode == DurabilityMode::Durable;
+    opt.concurrent_write = 8;
     opt.inline_size = args.blob_size;
     opt.checkpoint_size = 128 << 20;
-    opt.cache_capacity = 1 << 30;
+    opt.cache_capacity = 3 << 30;
     opt.lru_capacity = 1 << 30;
-    opt.pool_capacity = 1 << 30;
+    opt.pool_capacity = 16 * (64 << 20);
     opt.enable_backpressure = true;
     opt.gc_timeout = 5 * 1000;
     opt.gc_eager = false;
