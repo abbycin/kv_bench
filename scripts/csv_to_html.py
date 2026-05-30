@@ -4,7 +4,11 @@ import argparse
 import base64
 import csv
 import json
+import re
 import statistics
+import tomllib
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -19,12 +23,302 @@ ENGINE_STYLE_FALLBACK = [
 WORKLOAD_TEMPLATE = [
     ("W1", "W1 (95R/5U, uniform)"),
     ("W2", "W2 (95R/5U, zipf)"),
-    ("W3", "W3 (50R/50U)"),
-    ("W4", "W4 (5R/95U)"),
-    ("W5", "W5 (70R/25U/5S)"),
-    ("W6", "W6 (100% scan)"),
+    ("W3", "W3 (50R/50U, uniform)"),
+    ("W4", "W4 (5R/95U, uniform)"),
+    ("W5", "W5 (70R/25U/5S, uniform)"),
+    ("W6", "W6 (100% scan, uniform)"),
 ]
 WORKLOAD_LABELS = dict(WORKLOAD_TEMPLATE)
+TEST_TOOL_SOURCE_URL = "https://github.com/abbycin/kv_bench"
+
+
+SEMVER_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?$")
+
+
+def parse_semver(version: str) -> tuple[int, int, int] | None:
+    m = SEMVER_RE.match(version.strip())
+    if not m:
+        return None
+    major = int(m.group(1))
+    minor = int(m.group(2) or "0")
+    patch = int(m.group(3) or "0")
+    return (major, minor, patch)
+
+
+def parse_semver_with_components(version: str) -> tuple[tuple[int, int, int], int] | None:
+    m = SEMVER_RE.match(version.strip())
+    if not m:
+        return None
+    major = int(m.group(1))
+    has_minor = m.group(2) is not None
+    has_patch = m.group(3) is not None
+    minor = int(m.group(2) or "0")
+    patch = int(m.group(3) or "0")
+    count = 1 + int(has_minor) + int(has_patch)
+    return (major, minor, patch), count
+
+
+def wildcard_bounds(token: str) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
+    parts = [p.strip() for p in token.split(".")]
+    prefix: list[int] = []
+    wildcard_seen = False
+    for part in parts:
+        if part in ("*", "x", "X"):
+            wildcard_seen = True
+            break
+        if not part.isdigit():
+            return None
+        prefix.append(int(part))
+    if not wildcard_seen:
+        return None
+    if not prefix:
+        return ((0, 0, 0), (10**9, 0, 0))
+
+    lower = (prefix + [0, 0, 0])[:3]
+    if len(prefix) == 1:
+        upper = (prefix[0] + 1, 0, 0)
+    elif len(prefix) == 2:
+        upper = (prefix[0], prefix[1] + 1, 0)
+    else:
+        upper = (prefix[0], prefix[1], prefix[2] + 1)
+    return ((lower[0], lower[1], lower[2]), upper)
+
+
+def version_satisfies_clause(version: tuple[int, int, int], clause: str) -> bool:
+    part = clause.strip()
+    if not part:
+        return True
+    if part in ("*", "x", "X"):
+        return True
+
+    if part.startswith("^"):
+        parsed = parse_semver(part[1:].strip())
+        if parsed is None:
+            return False
+        major, minor, patch = parsed
+        if major > 0:
+            upper = (major + 1, 0, 0)
+        elif minor > 0:
+            upper = (0, minor + 1, 0)
+        else:
+            upper = (0, 0, patch + 1)
+        return version >= parsed and version < upper
+
+    if part.startswith("~"):
+        parsed_with_count = parse_semver_with_components(part[1:].strip())
+        if parsed_with_count is None:
+            return False
+        parsed, count = parsed_with_count
+        major, minor, _ = parsed
+        if count <= 1:
+            upper = (major + 1, 0, 0)
+        else:
+            upper = (major, minor + 1, 0)
+        return version >= parsed and version < upper
+
+    wildcard = wildcard_bounds(part)
+    if wildcard is not None:
+        lower, upper = wildcard
+        return version >= lower and version < upper
+
+    m = re.match(r"^(>=|<=|>|<|=)?\s*(.+)$", part)
+    if not m:
+        return False
+    op = m.group(1)
+    raw_token = m.group(2).strip()
+    token = parse_semver(raw_token)
+    if token is None:
+        return False
+
+    if op == ">=":
+        return version >= token
+    if op == "<=":
+        return version <= token
+    if op == ">":
+        return version > token
+    if op == "<":
+        return version < token
+    if op == "=":
+        return version == token
+
+    # Cargo default when no operator is caret.
+    return version_satisfies_clause(version, f"^{raw_token}")
+
+
+def version_satisfies_requirement(version_text: str, requirement: str) -> bool:
+    version = parse_semver(version_text)
+    if version is None:
+        return False
+    req = requirement.strip()
+    if not req or req == "*":
+        return True
+    clauses = [part.strip() for part in req.split(",")]
+    return all(version_satisfies_clause(version, clause) for clause in clauses)
+
+
+def resolve_crates_io_version(crate_name: str, requirement: str) -> str:
+    url = f"https://crates.io/api/v1/crates/{crate_name}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "kv_bench-csv_to_html",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        return "unknown"
+
+    candidates: list[str] = []
+    for item in payload.get("versions", []):
+        ver = item.get("num")
+        if not isinstance(ver, str):
+            continue
+        if item.get("yanked", False):
+            continue
+        if "-" in ver:
+            continue
+        if version_satisfies_requirement(ver, requirement):
+            candidates.append(ver)
+
+    if not candidates:
+        return "unknown"
+
+    candidates.sort(key=lambda v: parse_semver(v) or (0, 0, 0), reverse=True)
+    return candidates[0]
+
+
+def resolve_lockfile_version(
+    repo_root: Path,
+    crate_name: str,
+    requirement: str,
+) -> str:
+    lock_path = repo_root / "Cargo.lock"
+    if not lock_path.exists():
+        return "unknown"
+    try:
+        with lock_path.open("rb") as f:
+            lock_obj = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return "unknown"
+
+    versions: list[str] = []
+    packages = lock_obj.get("package", [])
+    if not isinstance(packages, list):
+        return "unknown"
+    for pkg in packages:
+        if not isinstance(pkg, dict):
+            continue
+        if pkg.get("name") != crate_name:
+            continue
+        ver = pkg.get("version")
+        if not isinstance(ver, str):
+            continue
+        if "-" in ver:
+            continue
+        if version_satisfies_requirement(ver, requirement):
+            versions.append(ver)
+
+    if not versions:
+        return "unknown"
+
+    versions.sort(key=lambda v: parse_semver(v) or (0, 0, 0), reverse=True)
+    return versions[0]
+
+
+def resolve_git_head(repo_path: Path) -> str:
+    git_dir = repo_path / ".git"
+    head_path = git_dir / "HEAD"
+    if not head_path.exists():
+        return "unknown"
+    try:
+        head_text = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown"
+
+    if head_text.startswith("ref: "):
+        ref_rel = head_text[5:].strip()
+        ref_path = git_dir / ref_rel
+        if ref_path.exists():
+            try:
+                return ref_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                return "unknown"
+        packed_refs = git_dir / "packed-refs"
+        if packed_refs.exists():
+            try:
+                for line in packed_refs.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or line.startswith("^"):
+                        continue
+                    parts = line.split(" ")
+                    if len(parts) == 2 and parts[1] == ref_rel:
+                        return parts[0]
+            except OSError:
+                return "unknown"
+        return "unknown"
+    return head_text
+
+
+def infer_mace_identity(repo_root: Path) -> tuple[str, str]:
+    cargo_path = repo_root / "Cargo.toml"
+    if not cargo_path.exists():
+        return ("mace commit id", "unknown")
+
+    try:
+        with cargo_path.open("rb") as f:
+            cargo_obj = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return ("mace commit id", "unknown")
+
+    deps = cargo_obj.get("dependencies", {})
+    if not isinstance(deps, dict):
+        return ("mace commit id", "unknown")
+    mace_dep = deps.get("mace-kv")
+    if mace_dep is None:
+        return ("mace commit id", "unknown")
+
+    if isinstance(mace_dep, str):
+        requirement = mace_dep.strip() or "*"
+        lock_version = resolve_lockfile_version(repo_root, "mace-kv", requirement)
+        if lock_version != "unknown":
+            return ("mace version", lock_version)
+        return ("mace version", resolve_crates_io_version("mace-kv", requirement))
+
+    if isinstance(mace_dep, dict):
+        path_value = mace_dep.get("path")
+        if isinstance(path_value, str) and path_value.strip():
+            dep_path = Path(path_value.strip())
+            mace_repo = dep_path if dep_path.is_absolute() else (repo_root / dep_path)
+            return ("mace commit id", resolve_git_head(mace_repo.resolve()))
+        version_req = mace_dep.get("version")
+        if isinstance(version_req, str) and version_req.strip():
+            requirement = version_req.strip()
+            lock_version = resolve_lockfile_version(repo_root, "mace-kv", requirement)
+            if lock_version != "unknown":
+                return ("mace version", lock_version)
+            return ("mace version", resolve_crates_io_version("mace-kv", requirement))
+
+    return ("mace commit id", "unknown")
+
+
+def infer_rocksdb_version(repo_root: Path) -> str:
+    vcpkg_path = repo_root / "rocksdb" / "vcpkg.json"
+    if not vcpkg_path.exists():
+        return "unknown"
+
+    try:
+        obj = json.loads(vcpkg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+
+    for item in obj.get("overrides", []):
+        if item.get("name") == "rocksdb" and isinstance(item.get("version"), str):
+            return item["version"]
+
+    return "unknown"
 
 
 def parse_args() -> argparse.Namespace:
@@ -238,15 +532,23 @@ def build_report_payload(rows: list[dict[str, Any]], engines: set[str], kv_pairs
     }
 
 
-def render_html(payload: dict[str, Any], source_csv: str, source_csv_name: str, source_csv_b64: str) -> str:
+def render_html(
+    payload: dict[str, Any],
+    source_csv: str,
+    source_csv_name: str,
+    source_csv_b64: str,
+    mace_label: str,
+    mace_value: str,
+    rocksdb_version: str,
+) -> str:
     payload_json = json.dumps(payload, ensure_ascii=False)
 
     return f"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Benchmark 报告</title>
+  <title>Benchmark Report</title>
   <style>
     :root {{
       --bg: #f7f8fc;
@@ -259,7 +561,7 @@ def render_html(payload: dict[str, Any], source_csv: str, source_csv_name: str, 
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      font-family: "Noto Sans SC", "Segoe UI", sans-serif;
+      font-family: "Segoe UI", sans-serif;
       color: var(--text);
       background: radial-gradient(circle at top right, #e8eeff 0%, var(--bg) 45%);
     }}
@@ -391,22 +693,30 @@ def render_html(payload: dict[str, Any], source_csv: str, source_csv_name: str, 
 </head>
 <body>
   <div class="container">
-    <h1>Benchmark 报告</h1>
+    <h1>Benchmark Report</h1>
     <div class="sub">
-      数据来源:
+      CSV source:
       <a id="source-download" class="source-link" href="#" download="{source_csv_name}">
         <code>{source_csv}</code>
       </a>
-      (点击下载原始 CSV)
+      (click to download raw CSV)
+    </div>
+    <div class="sub">
+      Test tool source code:
+      <a class="source-link" href="{TEST_TOOL_SOURCE_URL}" target="_blank" rel="noopener noreferrer">{TEST_TOOL_SOURCE_URL}</a>
+      <br />
+      {mace_label}: <code>{mace_value}</code>
+      <br />
+      rocksdb version: <code>{rocksdb_version}</code>
     </div>
 
     <div class="legend-wrap">
       <div class="card">
-        <div class="legend-title">颜色: key/value 对 (跨 engine 保持一致)</div>
+        <div class="legend-title">Color: key/value pairs (consistent across engines)</div>
         <div id="kv-legend" class="legend-list"></div>
       </div>
       <div class="card">
-        <div class="legend-title">填充样式: engine</div>
+        <div class="legend-title">Fill style: engine</div>
         <div id="engine-legend" class="legend-list"></div>
       </div>
     </div>
@@ -654,7 +964,7 @@ def render_html(payload: dict[str, Any], source_csv: str, source_csv_name: str, 
             </div>
           </div>
           <div class="chart-card">
-            <div class="chart-tools"><button type="button" class="reset-btn" id="chart-reset-${{wIdx}}">还原缩放</button></div>
+            <div class="chart-tools"><button type="button" class="reset-btn" id="chart-reset-${{wIdx}}">Reset zoom</button></div>
             <canvas id="metric-${{wIdx}}"></canvas>
           </div>
         `;
@@ -722,7 +1032,18 @@ def main() -> int:
     payload = build_report_payload(rows, engines, kv_pairs)
     csv_bytes = csv_path.read_bytes()
     csv_b64 = base64.b64encode(csv_bytes).decode("ascii")
-    html = render_html(payload, str(csv_path), csv_path.name, csv_b64)
+    repo_root = Path(__file__).resolve().parent.parent
+    mace_label, mace_value = infer_mace_identity(repo_root)
+    rocksdb_version = infer_rocksdb_version(repo_root)
+    html = render_html(
+        payload,
+        str(csv_path),
+        csv_path.name,
+        csv_b64,
+        mace_label,
+        mace_value,
+        rocksdb_version,
+    )
 
     output_path.write_text(html, encoding="utf-8")
     print(f"HTML written to: {output_path}")

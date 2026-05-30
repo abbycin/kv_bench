@@ -1082,7 +1082,8 @@ fn run_one_op(
                     ReadPath::Snapshot => {
                         if let Ok(view) = bucket.view() {
                             for item in view.seek(prefix).take(scan_len.max(1)) {
-                                std::hint::black_box(item);
+                                std::hint::black_box(item.key());
+                                std::hint::black_box(item.val());
                             }
                             true
                         } else {
@@ -1092,7 +1093,8 @@ fn run_one_op(
                     ReadPath::RwTxn => {
                         if let Ok(tx) = bucket.begin() {
                             for item in tx.seek(prefix).take(scan_len.max(1)) {
-                                std::hint::black_box(item);
+                                std::hint::black_box(item.key());
+                                std::hint::black_box(item.val());
                             }
                             tx.commit().is_ok()
                         } else {
