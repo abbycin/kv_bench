@@ -1,9 +1,5 @@
 use clap::{ArgAction, Parser};
-#[cfg(target_os = "linux")]
-use logger::Logger;
 use mace::{Mace, Options};
-#[cfg(feature = "custom_alloc")]
-use myalloc::{MyAlloc, print_filtered_trace};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -15,10 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-#[cfg(feature = "custom_alloc")]
-#[global_allocator]
-static GLOBAL: MyAlloc = MyAlloc;
 
 const LAT_BUCKETS: usize = 64;
 const PREFIX_GROUPS: usize = 1024;
@@ -187,7 +179,6 @@ struct Quantiles {
 
 #[derive(Clone, Debug)]
 struct ResultRow {
-    ts_epoch_ms: u128,
     engine: &'static str,
     workload_id: String,
     mode: String,
@@ -432,13 +423,12 @@ fn csv_escape(raw: &str) -> String {
 }
 
 fn result_header() -> &'static str {
-    "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us"
+    "engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us"
 }
 
 fn result_row_csv(row: &ResultRow) -> String {
     format!(
-        "v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{:.3},{},{},{},{},{},{}",
-        row.ts_epoch_ms,
+        "{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         row.engine,
         csv_escape(&row.workload_id),
         csv_escape(&row.mode),
@@ -460,7 +450,7 @@ fn result_row_csv(row: &ResultRow) -> String {
         row.total_op,
         row.ok_op,
         row.err_op,
-        row.ops,
+        row.ops as u64,
         row.quantiles.p50_us,
         row.quantiles.p95_us,
         row.quantiles.p99_us,
@@ -546,12 +536,6 @@ fn pick_op_kind(rng: &mut StdRng, spec: &WorkloadSpec) -> OpKind {
 }
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    {
-        Logger::init().add_file("kv_bench.log", true);
-        log::set_max_level(log::LevelFilter::Error);
-    }
-
     let args = Args::parse();
     let path = Path::new(&args.path);
     let shared_keyspace = args.shared_keyspace && !args.no_shared_keyspace;
@@ -650,8 +634,10 @@ fn main() {
     opt.concurrent_write = 8;
     opt.inline_size = args.blob_size;
     opt.checkpoint_size = 128 << 20;
-    opt.cache_capacity = 3 << 30;
+    opt.cache_capacity = 4 << 30;
     opt.lru_capacity = 1 << 30;
+    opt.blob_handle_cache_capacity = 256;
+    opt.data_handle_cache_capacity = 256;
     opt.pool_capacity = 16 * (64 << 20);
     opt.enable_backpressure = true;
     opt.gc_timeout = 5 * 1000;
@@ -899,7 +885,6 @@ fn main() {
     };
 
     let row = ResultRow {
-        ts_epoch_ms: now_epoch_ms(),
         engine: "mace",
         workload_id: workload.id.clone(),
         mode: workload.mode_label.clone(),
@@ -946,8 +931,6 @@ fn main() {
     );
 
     drop(db);
-    #[cfg(feature = "custom_alloc")]
-    print_filtered_trace(|x, y| log::info!("{}{}", x, y));
 }
 
 #[allow(clippy::too_many_arguments)]

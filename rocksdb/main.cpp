@@ -30,7 +30,6 @@
 #include <unistd.h>
 
 #include "CLI/CLI.hpp"
-#include "instant.h"
 
 template<class T>
 static void black_box(const T &t) {
@@ -131,7 +130,6 @@ struct ThreadStats {
 };
 
 struct ResultRow {
-    uint64_t ts_epoch_ms;
     std::string workload_id;
     std::string mode;
     DurabilityMode durability_mode;
@@ -376,19 +374,18 @@ static std::string csv_escape(const std::string &v) {
 }
 
 static const char *result_header() {
-    return "schema_version,ts_epoch_ms,engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_"
+    return "engine,workload_id,mode,durability_mode,threads,key_size,value_size,prefill_"
            "keys,shared_keyspace,distribution,zipf_theta,read_pct,update_pct,scan_pct,scan_len,read_path,warmup_secs,"
            "measure_secs,total_op,ok_op,err_op,ops,p50_us,p95_us,p99_us,p999_us,elapsed_us";
 }
 
 static std::string result_row_csv(const ResultRow &r) {
-    return fmt::format("v2,{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-                       r.ts_epoch_ms, "rocksdb", csv_escape(r.workload_id), csv_escape(r.mode),
-                       durability_str(r.durability_mode), r.threads, r.key_size, r.value_size, r.prefill_keys,
-                       r.shared_keyspace, distribution_str(r.distribution), r.zipf_theta, r.read_pct, r.update_pct,
-                       r.scan_pct, r.scan_len, read_path_str(r.read_path), r.warmup_secs, r.measure_secs, r.total_op,
-                       r.ok_op, r.err_op, static_cast<uint64_t>(r.ops), r.quantiles.p50_us, r.quantiles.p95_us,
-                       r.quantiles.p99_us, r.quantiles.p999_us, r.elapsed_us);
+    return fmt::format("{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}", "rocksdb",
+                       csv_escape(r.workload_id), csv_escape(r.mode), durability_str(r.durability_mode), r.threads,
+                       r.key_size, r.value_size, r.prefill_keys, r.shared_keyspace, distribution_str(r.distribution),
+                       r.zipf_theta, r.read_pct, r.update_pct, r.scan_pct, r.scan_len, read_path_str(r.read_path),
+                       r.warmup_secs, r.measure_secs, r.total_op, r.ok_op, r.err_op, static_cast<uint64_t>(r.ops),
+                       r.quantiles.p50_us, r.quantiles.p95_us, r.quantiles.p99_us, r.quantiles.p999_us, r.elapsed_us);
 }
 
 static bool append_result_row(const std::string &path, const ResultRow &row) {
@@ -720,7 +717,7 @@ int main(int argc, char *argv[]) {
     cfo.write_buffer_size = 64 << 20;
     cfo.max_write_buffer_number = 16;
 
-    auto cache = rocksdb::NewLRUCache(4 << 30);
+    auto cache = rocksdb::NewLRUCache(5 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
     table_options.block_cache = cache;
     cfo.table_factory.reset(NewBlockBasedTableFactory(table_options));
@@ -908,7 +905,6 @@ int main(int argc, char *argv[]) {
     uint64_t ok_op = total_op >= err_op ? (total_op - err_op) : 0;
 
     auto row = ResultRow{
-            .ts_epoch_ms = now_epoch_ms(),
             .workload_id = workload_spec.id,
             .mode = workload_spec.mode_label,
             .durability_mode = durability.value(),
