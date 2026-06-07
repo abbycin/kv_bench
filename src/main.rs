@@ -1,5 +1,5 @@
 use clap::{ArgAction, Parser};
-use mace::{Mace, Options};
+use mace::{BucketOptions, Mace, Options};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -632,27 +632,29 @@ fn main() {
     let mut opt = Options::new(path);
     opt.sync_on_write = durability_mode == DurabilityMode::Durable;
     opt.concurrent_write = 8;
-    opt.inline_size = args.blob_size;
-    opt.checkpoint_size = 128 << 20;
-    opt.cache_capacity = 4 << 30;
     opt.lru_capacity = 1 << 30;
     opt.blob_handle_cache_capacity = 256;
     opt.data_handle_cache_capacity = 256;
-    opt.pool_capacity = 16 * (64 << 20);
-    opt.enable_backpressure = true;
     opt.gc_timeout = 5 * 1000;
     opt.gc_eager = false;
     opt.data_garbage_ratio = 50;
     opt.tmp_store = cleanup;
 
+    let mut bopt = BucketOptions::new();
+    bopt.inline_size = args.blob_size;
+    bopt.checkpoint_size = 128 << 20;
+    bopt.cache_capacity = 4 << 30;
+    bopt.enable_backpressure = true;
+    bopt.pool_capacity = 1 << 30;
+
     let db = Mace::new(opt.validate().unwrap()).unwrap();
     db.disable_gc();
     let bkt = if args.reuse_path {
         db.get_bucket("default")
-            .or_else(|_| db.new_bucket("default"))
+            .or_else(|_| db.new_bucket("default", bopt))
             .unwrap()
     } else {
-        db.new_bucket("default").unwrap()
+        db.new_bucket("default", bopt).unwrap()
     };
     let value = Arc::new(vec![b'0'; args.value_size]);
 
