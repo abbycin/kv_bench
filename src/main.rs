@@ -631,7 +631,7 @@ fn main() {
 
     let mut opt = Options::new(path);
     opt.sync_on_write = durability_mode == DurabilityMode::Durable;
-    opt.concurrent_write = 8;
+    opt.concurrent_write = 16;
     opt.lru_capacity = 1 << 30;
     opt.blob_handle_cache_capacity = 256;
     opt.data_handle_cache_capacity = 256;
