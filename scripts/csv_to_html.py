@@ -708,6 +708,18 @@ def render_html(
       {mace_label}: <code>{mace_value}</code>
       <br />
       rocksdb version: <code>{rocksdb_version}</code>
+      <br />
+      test environment:
+      <br />
+      - OS: openSUSE Tumbleweed
+      <br />
+      - CPU: AMD Ryzen 5 3600 (6 cores / 12 threads)
+      <br />
+      - Memory: 32 GiB RAM
+      <br />
+      - Filesystem: <code>xfs</code> (<code>/dev/nvme1n1p4</code>, mounted at <code>/nvme</code>)
+      <br />
+      - SSD: ZHITAI TiPlus5000 1TB
     </div>
 
     <div class="legend-wrap">
