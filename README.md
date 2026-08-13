@@ -1,54 +1,82 @@
 # kv_bench (Mace vs RocksDB)
 
-Quick start for reproducible Mace vs RocksDB comparison. Full guide: [docs/repro.md](./docs/repro.md).
+Reproducible benchmark comparison of two embedded KV engines: mace and RocksDB.
 
-## 5-Minute Quickstart
-1. Set your storage root (any mount path, not hardcoded to `/nvme`):
-
-```bash
-export KV_BENCH_STORAGE_ROOT=/path/to/your/storage/kvbench
-mkdir -p "${KV_BENCH_STORAGE_ROOT}"
-```
-
-2. Initialize Python env once:
-assume that kv_bench repo is located in `$HOME`
-```bash
-cd "$HOME/kv_bench/scripts"
-./init.sh
-source ./bin/activate
-cd "$HOME/kv_bench"
-```
-
-3. Run baseline comparison (both engines append to the same CSV):
-
-Default quick-baseline timing in these scripts is `WARMUP_SECS=3` and `MEASURE_SECS=5`.
+## Quickstart
+1. Clone the repo:
 
 ```bash
-rm -rf "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_rocks"
-mkdir -p "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_rocks"
-
-./scripts/mace.sh "${KV_BENCH_STORAGE_ROOT}/basic_mace" ./scripts/benchmark_results.csv
-./scripts/rocksdb.sh "${KV_BENCH_STORAGE_ROOT}/basic_rocks" ./scripts/benchmark_results.csv
+git clone https://github.com/abbycin/kv_bench
+cd kv_bench
 ```
 
-4. Plot results:
+2. Initialize the Python env (used by the report script):
 
 ```bash
-./scripts/bin/python ./scripts/plot.py ./scripts/benchmark_results.csv ./scripts
+./scripts/init.sh
 ```
 
-5. Print a direct comparison table from the CSV:
+3. Run the benchmark for both engines — pass any fast storage path (e.g. an NVMe mount) as the storage root; results are appended to `./scripts/benchmark_results.csv`:
 
 ```bash
-./scripts/bin/python ./scripts/compare_baseline.py ./scripts/benchmark_results.csv
+./scripts/mace.sh /path/to/nvme
+./scripts/rocksdb.sh /path/to/nvme
 ```
+
+4. Generate the comparison report:
+
+```bash
+./scripts/bin/python ./scripts/csv_to_html.py ./scripts/benchmark_results.csv
+```
+
+Output: `./scripts/benchmark_results.html`. 
+
+## Engines and Harnesses
+Each engine has its own self-contained benchmark binary with an identical CLI
+(`--path`, `--workload W1..W6`, `--threads`, `--key-size`, `--value-size`,
+`--prefill-keys`, `--warmup-secs`, `--measure-secs`, `--read-path`,
+`--durability`, `--result-file`):
+
+- mace: `src/bin/mace_bench.rs` → `target/release/mace_bench` (`cargo build --release`)
+- RocksDB: `rocksdb/main.cpp` → `rocksdb/build/release/rocksdb_bench` (cmake)
+
+The two harnesses share the same workload definitions, latency accounting and
+CSV schema, but each is written directly against its engine's API.
 
 ## What Is Compared
 - Comparison unit: rows with identical `workload_id`, `threads`, `key_size`, `value_size`, `durability_mode`, `read_path`
-- Fairness rule for read-heavy workloads: `get`, `scan`, and `W1`-`W6` run one GC/compaction pass after prefill and before warmup/measurement, so RocksDB is not compared with GC artificially disabled while reads may have to touch multiple SSTs
+- Fairness rule: every workload (`W1`-`W6`) runs one GC/compaction pass after prefill and before warmup/measurement (mace `enable_gc()`, RocksDB compaction), so engines are not compared with GC artificially disabled while reads may have to touch stale data
 - Throughput metric: workload-level `ops` (higher is better)
 - Tail latency metric: workload-level `p99_us` (lower is better)
   - This is the workload-level p99 of all operations executed in that row, not per-op-type p99
+- Operation semantics: every measured op is one transaction (write = `begin` + `put` + `commit`; read = snapshot or rw transaction), identical across engines, so `ops` is transactions per second
+- Memory / backpressure strategy differs per engine: mace runs with `enable_backpressure=true`, RocksDB with bounded write buffers (`write_buffer_size=64MB` × `max_write_buffer_number=16`, writes block when full). Both are bounded to ~1 GiB of cache/buffer memory, so the comparison is on the same memory scale
+
+## Why redb and sled Are Not Compared
+Both were evaluated and rejected because their concurrency model cannot be
+compared fairly with mace/RocksDB on the W1-W6 workloads, all of which include
+multi-threaded concurrent writes.
+
+- **redb (v4.1.0)** is a single-writer design (its design doc: "supports a single
+  writer and multiple concurrent readers"; `begin_write()` blocks on a global
+  write lock). Measured on this harness, its write-heavy throughput does not
+  scale with threads at all (W4: ~3.2k ops/s at 1 thread, ~2.4k at 4), because
+  every write serializes. Per-transaction commit cost is ~0.3-1ms, and relaxed
+  mode additionally degrades quadratically over time: `process_freed_pages_nondurable`
+  rescans the whole freed-page backlog on every commit. redb's own official
+  benchmark confirms the same individual-write throughput (~1k txn/s), so these
+  are native engine characteristics, not harness artifacts — they just are not
+  comparable with concurrent-writer engines on the same workloads.
+- **sled (v0.34.7)**'s transaction API (`Tree::transaction`) takes a process-global write
+  lock too (`concurrency_control::write()`), so using transactions for the
+  per-op write path would reproduce the same single-writer problem. Its plain
+  `Tree::insert` is concurrent, but then the harness's per-op transaction
+  accounting no longer matches the engine semantics; sled transactions also
+  cannot scan (no rw_txn path), there is no manual compaction API (the shared
+  GC/compaction fairness rule cannot be applied), and durability has no per-op
+  sync switch (the default 500ms background fsync conflicts with the relaxed
+  semantics). The comparison would not be apples-to-apples on any of the three
+  axes the harness controls (transactions, durability, compaction).
 
 ## Workloads
 - `W1`: `95%` read + `5%` update, uniform distribution
@@ -60,5 +88,9 @@ mkdir -p "${KV_BENCH_STORAGE_ROOT}/basic_mace" "${KV_BENCH_STORAGE_ROOT}/basic_r
 
 Raw CSV path: `./scripts/benchmark_results.csv`
 
-## Full Reproduction
-For phase-by-phase commands, knobs, and interpretation rules, use [docs/repro.md](./docs/repro.md).
+## Scripts
+- `mace.sh` / `rocksdb.sh` — run the W1-W6 matrix for one engine; first argument is the storage root, second optional argument is the result CSV (defaults to `./scripts/benchmark_results.csv`)
+- `csv_to_html.py` — single-page interactive HTML report (ops and p99 charts per workload, per key/value profile); colors are per key/value pair across engines, fill styles distinguish engines (mace solid, RocksDB hatch)
+- `compare_baseline.py` — mace-vs-rocksdb ratio table from the CSV (pandas, use the `scripts/bin` venv)
+- `thread_points.sh` — shared power-of-two thread points helper sourced by the run scripts
+- `init.sh` — create the `scripts/bin` venv (pandas) used by the report scripts

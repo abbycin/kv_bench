@@ -729,6 +729,7 @@ int main(int argc, char *argv[]) {
     options.create_if_missing = true;
     options.allow_concurrent_memtable_write = true;
     options.enable_pipelined_write = true;
+    options.use_fsync = (durability.value() == DurabilityMode::Durable);
 
     auto wopt = rocksdb::WriteOptions();
     wopt.no_slowdown = false;

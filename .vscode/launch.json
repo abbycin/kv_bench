@@ -7,15 +7,15 @@
                 {
                         "type": "lldb",
                         "request": "launch",
-                        "name": "Debug executable 'kv_bench'",
+                        "name": "Debug executable 'mace_bench'",
                         "cargo": {
                                 "args": [
                                         "build",
-                                        "--bin=kv_bench",
+                                        "--bin=mace_bench",
                                         "--package=kv_bench"
                                 ],
                                 "filter": {
-                                        "name": "kv_bench",
+                                        "name": "mace_bench",
                                         "kind": "bin"
                                 }
                         },
@@ -26,8 +26,8 @@
                                 "1",
                                 "--iterations",
                                 "100000",
-                                "--mode",
-                                "insert",
+                                "--workload",
+                                "W1",
                                 "--key-size",
                                 "1024",
                                 "--value-size",
@@ -38,16 +38,16 @@
                 {
                         "type": "lldb",
                         "request": "launch",
-                        "name": "Debug unit tests in executable 'kv_bench'",
+                        "name": "Debug unit tests in executable 'mace_bench'",
                         "cargo": {
                                 "args": [
                                         "test",
                                         "--no-run",
-                                        "--bin=kv_bench",
+                                        "--bin=mace_bench",
                                         "--package=kv_bench"
                                 ],
                                 "filter": {
-                                        "name": "kv_bench",
+                                        "name": "mace_bench",
                                         "kind": "bin"
                                 }
                         },

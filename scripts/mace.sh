@@ -47,7 +47,7 @@ for workload in "${workloads[@]}"; do
             run_path="$(mktemp -u -p "${db_root}" "mace_${workload}_${t}_${key_size}_${value_size}_XXXXXX")"
             printf "[mace] workload=%s threads=%s key=%s value=%s path=%s\n" \
               "${workload}" "${t}" "${key_size}" "${value_size}" "${run_path}"
-            "${root_dir}/target/release/kv_bench" \
+            "${root_dir}/target/release/mace_bench" \
               --path "${run_path}" \
               --workload "${workload}" \
               --threads "${t}" \

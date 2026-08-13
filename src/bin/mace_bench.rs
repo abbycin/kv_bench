@@ -1,13 +1,11 @@
 use clap::{ArgAction, Parser};
 use mace::{BucketOptions, Mace, Options};
 use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::process::exit;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,9 +19,6 @@ const PREFILL_BATCH: usize = 1024;
 struct Args {
     #[arg(short = 'p', long)]
     path: String,
-
-    #[arg(short = 'm', long, default_value = "insert")]
-    mode: String,
 
     #[arg(long)]
     workload: Option<String>,
@@ -39,9 +34,6 @@ struct Args {
 
     #[arg(short = 'i', long, default_value_t = 10000)]
     iterations: usize,
-
-    #[arg(long, default_value_t = false)]
-    random: bool,
 
     #[arg(long, default_value_t = 8192)]
     blob_size: usize,
@@ -160,7 +152,6 @@ struct WorkloadSpec {
     scan_pct: u8,
     scan_len: usize,
     requires_prefill: bool,
-    insert_only: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -223,111 +214,64 @@ impl Default for ThreadStats {
 }
 
 fn parse_workload(args: &Args) -> Result<WorkloadSpec, String> {
-    if let Some(w) = args.workload.as_ref() {
-        let id = w.trim().to_ascii_uppercase();
-        let spec = match id.as_str() {
-            "W1" => WorkloadSpec {
-                id,
-                mode_label: "mixed".into(),
-                distribution: Distribution::Uniform,
-                read_pct: 95,
-                update_pct: 5,
-                scan_pct: 0,
-                scan_len: args.scan_len,
-                requires_prefill: true,
-                insert_only: false,
-            },
-            "W2" => WorkloadSpec {
-                id,
-                mode_label: "mixed".into(),
-                distribution: Distribution::Zipf,
-                read_pct: 95,
-                update_pct: 5,
-                scan_pct: 0,
-                scan_len: args.scan_len,
-                requires_prefill: true,
-                insert_only: false,
-            },
-            "W3" => WorkloadSpec {
-                id,
-                mode_label: "mixed".into(),
-                distribution: Distribution::Uniform,
-                read_pct: 50,
-                update_pct: 50,
-                scan_pct: 0,
-                scan_len: args.scan_len,
-                requires_prefill: true,
-                insert_only: false,
-            },
-            "W4" => WorkloadSpec {
-                id,
-                mode_label: "mixed".into(),
-                distribution: Distribution::Uniform,
-                read_pct: 5,
-                update_pct: 95,
-                scan_pct: 0,
-                scan_len: args.scan_len,
-                requires_prefill: true,
-                insert_only: false,
-            },
-            "W5" => WorkloadSpec {
-                id,
-                mode_label: "mixed".into(),
-                distribution: Distribution::Uniform,
-                read_pct: 70,
-                update_pct: 25,
-                scan_pct: 5,
-                scan_len: args.scan_len,
-                requires_prefill: true,
-                insert_only: false,
-            },
-            "W6" => WorkloadSpec {
-                id,
-                mode_label: "scan".into(),
-                distribution: Distribution::Uniform,
-                read_pct: 0,
-                update_pct: 0,
-                scan_pct: 100,
-                scan_len: args.scan_len,
-                requires_prefill: true,
-                insert_only: false,
-            },
-            _ => {
-                return Err(format!(
-                    "invalid workload `{}` (supported: W1, W2, W3, W4, W5, W6)",
-                    w
-                ));
-            }
-        };
-        return Ok(spec);
-    }
-
-    let mode = args.mode.trim().to_ascii_lowercase();
-    match mode.as_str() {
-        "insert" => Ok(WorkloadSpec {
-            id: "LEGACY_INSERT".into(),
-            mode_label: "insert".into(),
+    let w = match args.workload.as_ref() {
+        Some(w) => w,
+        None => return Err("missing --workload (supported: W1, W2, W3, W4, W5, W6)".into()),
+    };
+    let id = w.trim().to_ascii_uppercase();
+    let spec = match id.as_str() {
+        "W1" => WorkloadSpec {
+            id,
+            mode_label: "mixed".into(),
             distribution: Distribution::Uniform,
-            read_pct: 0,
-            update_pct: 100,
-            scan_pct: 0,
-            scan_len: args.scan_len,
-            requires_prefill: false,
-            insert_only: true,
-        }),
-        "get" => Ok(WorkloadSpec {
-            id: "LEGACY_GET".into(),
-            mode_label: "get".into(),
-            distribution: Distribution::Uniform,
-            read_pct: 100,
-            update_pct: 0,
+            read_pct: 95,
+            update_pct: 5,
             scan_pct: 0,
             scan_len: args.scan_len,
             requires_prefill: true,
-            insert_only: false,
-        }),
-        "scan" => Ok(WorkloadSpec {
-            id: "LEGACY_SCAN".into(),
+        },
+        "W2" => WorkloadSpec {
+            id,
+            mode_label: "mixed".into(),
+            distribution: Distribution::Zipf,
+            read_pct: 95,
+            update_pct: 5,
+            scan_pct: 0,
+            scan_len: args.scan_len,
+            requires_prefill: true,
+        },
+        "W3" => WorkloadSpec {
+            id,
+            mode_label: "mixed".into(),
+            distribution: Distribution::Uniform,
+            read_pct: 50,
+            update_pct: 50,
+            scan_pct: 0,
+            scan_len: args.scan_len,
+            requires_prefill: true,
+        },
+        "W4" => WorkloadSpec {
+            id,
+            mode_label: "mixed".into(),
+            distribution: Distribution::Uniform,
+            read_pct: 5,
+            update_pct: 95,
+            scan_pct: 0,
+            scan_len: args.scan_len,
+            requires_prefill: true,
+        },
+        "W5" => WorkloadSpec {
+            id,
+            mode_label: "mixed".into(),
+            distribution: Distribution::Uniform,
+            read_pct: 70,
+            update_pct: 25,
+            scan_pct: 5,
+            scan_len: args.scan_len,
+            requires_prefill: true,
+        },
+        "W6" => WorkloadSpec {
+            id,
             mode_label: "scan".into(),
             distribution: Distribution::Uniform,
             read_pct: 0,
@@ -335,13 +279,15 @@ fn parse_workload(args: &Args) -> Result<WorkloadSpec, String> {
             scan_pct: 100,
             scan_len: args.scan_len,
             requires_prefill: true,
-            insert_only: false,
-        }),
-        _ => Err(format!(
-            "invalid mode `{}` (supported: insert, get, scan)",
-            args.mode
-        )),
-    }
+        },
+        _ => {
+            return Err(format!(
+                "invalid workload `{}` (supported: W1, W2, W3, W4, W5, W6)",
+                w
+            ));
+        }
+    };
+    Ok(spec)
 }
 
 fn workload_runs_gc(spec: &WorkloadSpec) -> bool {
@@ -519,9 +465,6 @@ enum OpKind {
 }
 
 fn pick_op_kind(rng: &mut StdRng, spec: &WorkloadSpec) -> OpKind {
-    if spec.insert_only {
-        return OpKind::Update;
-    }
     if spec.scan_pct == 100 {
         return OpKind::Scan;
     }
@@ -602,9 +545,6 @@ fn main() {
             exit(1);
         }
     };
-    let legacy_mode = workload.id.starts_with("LEGACY_");
-    let effective_warmup_secs = if legacy_mode { 0 } else { args.warmup_secs };
-    let effective_measure_secs = if legacy_mode { 0 } else { args.measure_secs };
 
     let mixed_workload = workload.read_pct > 0 && workload.update_pct > 0;
     if mixed_workload && !shared_keyspace {
@@ -701,7 +641,6 @@ fn main() {
     let ready_barrier = Arc::new(Barrier::new(args.threads + 1));
     let measure_barrier = Arc::new(Barrier::new(args.threads + 1));
     let measure_start = Arc::new(Mutex::new(None::<Instant>));
-    let insert_counter = Arc::new(AtomicUsize::new(0));
 
     let handles: Vec<JoinHandle<ThreadStats>> = (0..args.threads)
         .map(|tid| {
@@ -711,19 +650,16 @@ fn main() {
             let ready = Arc::clone(&ready_barrier);
             let measure = Arc::clone(&measure_barrier);
             let measure_start_slot = Arc::clone(&measure_start);
-            let ins_ctr = Arc::clone(&insert_counter);
             let key_size = args.key_size;
-            let random_insert = args.random;
             let read_path_mode = read_path;
-            let warmup_secs = effective_warmup_secs;
-            let measure_secs = effective_measure_secs;
+            let warmup_secs = args.warmup_secs;
+            let measure_secs = args.measure_secs;
             let distribution = spec.distribution;
             let zipf_theta = args.zipf_theta;
             let scan_len = spec.scan_len;
             let shared = shared_keyspace;
             let prefill_key_count = prefill_keys;
             let local_key_len = thread_prefill_ranges[tid].len;
-            let local_op_start = op_counts[tid].start;
             let local_op_count = op_counts[tid].len;
 
             std::thread::spawn(move || {
@@ -735,12 +671,8 @@ fn main() {
                     ^ (prefill_key_count as u64).wrapping_shl(7);
                 let mut rng = StdRng::seed_from_u64(seed);
                 let mut stats = ThreadStats::default();
-                let mut local_insert_idx = 0usize;
 
-                let mut count_indices: Vec<usize> = (0..local_op_count).collect();
-                if random_insert && spec.insert_only {
-                    count_indices.shuffle(&mut rng);
-                }
+                let count_indices: Vec<usize> = (0..local_op_count).collect();
 
                 ready.wait();
 
@@ -753,7 +685,6 @@ fn main() {
                             &bucket,
                             &v,
                             &mut rng,
-                            &spec,
                             distribution,
                             zipf_theta,
                             read_path_mode,
@@ -763,9 +694,6 @@ fn main() {
                             prefill_key_count,
                             local_key_len,
                             tid,
-                            &ins_ctr,
-                            &mut local_insert_idx,
-                            None,
                             None,
                         );
                     }
@@ -789,7 +717,6 @@ fn main() {
                             &bucket,
                             &v,
                             &mut rng,
-                            &spec,
                             distribution,
                             zipf_theta,
                             read_path_mode,
@@ -799,30 +726,17 @@ fn main() {
                             prefill_key_count,
                             local_key_len,
                             tid,
-                            &ins_ctr,
-                            &mut local_insert_idx,
-                            None,
                             Some(&mut stats),
                         );
                     }
                 } else {
-                    for idx in count_indices {
-                        let fixed_insert_id = if spec.insert_only {
-                            Some(if shared { local_op_start + idx } else { idx })
-                        } else {
-                            None
-                        };
-                        let op = if spec.insert_only {
-                            OpKind::Update
-                        } else {
-                            pick_op_kind(&mut rng, &spec)
-                        };
+                    for _ in count_indices {
+                        let op = pick_op_kind(&mut rng, &spec);
                         run_one_op(
                             op,
                             &bucket,
                             &v,
                             &mut rng,
-                            &spec,
                             distribution,
                             zipf_theta,
                             read_path_mode,
@@ -832,9 +746,6 @@ fn main() {
                             prefill_key_count,
                             local_key_len,
                             tid,
-                            &ins_ctr,
-                            &mut local_insert_idx,
-                            fixed_insert_id,
                             Some(&mut stats),
                         );
                     }
@@ -903,8 +814,8 @@ fn main() {
         scan_pct: workload.scan_pct,
         scan_len: workload.scan_len,
         read_path,
-        warmup_secs: effective_warmup_secs,
-        measure_secs: effective_measure_secs,
+        warmup_secs: args.warmup_secs,
+        measure_secs: args.measure_secs,
         total_op,
         ok_op,
         err_op,
@@ -941,7 +852,6 @@ fn run_one_op(
     bucket: &mace::Bucket,
     value: &Arc<Vec<u8>>,
     rng: &mut StdRng,
-    spec: &WorkloadSpec,
     distribution: Distribution,
     zipf_theta: f64,
     read_path: ReadPath,
@@ -951,9 +861,6 @@ fn run_one_op(
     prefill_keys: usize,
     local_key_len: usize,
     tid: usize,
-    insert_counter: &AtomicUsize,
-    local_insert_idx: &mut usize,
-    fixed_insert_id: Option<usize>,
     stats: Option<&mut ThreadStats>,
 ) {
     let start = stats.as_ref().map(|_| Instant::now());
@@ -993,48 +900,22 @@ fn run_one_op(
             }
         }
         OpKind::Update => {
-            let key_opt = if spec.insert_only {
-                if let Some(id) = fixed_insert_id {
-                    if shared_keyspace {
-                        Some(make_shared_key(id, key_size))
-                    } else {
-                        Some(make_thread_key(tid, id, key_size))
-                    }
-                } else if shared_keyspace {
-                    let id = insert_counter.fetch_add(1, Ordering::Relaxed);
-                    Some(make_shared_key(id, key_size))
+            let maybe_id = pick_key_id(
+                rng,
+                distribution,
+                zipf_theta,
+                shared_keyspace,
+                prefill_keys,
+                local_key_len,
+            );
+            if let Some(id) = maybe_id {
+                let key = if shared_keyspace {
+                    make_shared_key(id, key_size)
                 } else {
-                    let id = *local_insert_idx;
-                    *local_insert_idx += 1;
-                    Some(make_thread_key(tid, id, key_size))
-                }
-            } else {
-                let maybe_id = pick_key_id(
-                    rng,
-                    distribution,
-                    zipf_theta,
-                    shared_keyspace,
-                    prefill_keys,
-                    local_key_len,
-                );
-                if let Some(id) = maybe_id {
-                    if shared_keyspace {
-                        Some(make_shared_key(id, key_size))
-                    } else {
-                        Some(make_thread_key(tid, id, key_size))
-                    }
-                } else {
-                    None
-                }
-            };
-
-            if let Some(key) = key_opt {
+                    make_thread_key(tid, id, key_size)
+                };
                 if let Ok(tx) = bucket.begin() {
-                    let write_ok = if spec.insert_only {
-                        tx.upsert(key.as_slice(), value.as_slice()).is_ok()
-                    } else {
-                        tx.update(key.as_slice(), value.as_slice()).is_ok()
-                    };
+                    let write_ok = tx.update(key.as_slice(), value.as_slice()).is_ok();
                     if !write_ok {
                         false
                     } else {

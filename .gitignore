@@ -16,6 +16,4 @@ __pycache__
 *.log
 *.md
 !README.md
-!repro.md
 *.html
-analyze_results.py
