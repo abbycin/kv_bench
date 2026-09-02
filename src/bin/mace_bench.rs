@@ -590,7 +590,7 @@ fn main() {
     let db = Mace::new(opt.validate().unwrap()).unwrap();
     db.disable_gc();
     let bkt = if args.reuse_path {
-        db.get_bucket("default")
+        db.open_bucket("default")
             .or_else(|_| db.new_bucket("default", bopt))
             .unwrap()
     } else {

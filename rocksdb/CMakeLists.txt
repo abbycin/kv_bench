@@ -16,8 +16,14 @@ find_package(RocksDB CONFIG REQUIRED)
 add_executable(rocksdb_bench main.cpp
         instant.h)
 
+add_executable(rocksdb_merge_bench main_merge.cpp
+        instant.h)
+
 target_include_directories(rocksdb_bench PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(rocksdb_bench PRIVATE RocksDB::rocksdb CLI11::CLI11 fmt::fmt)
+
+target_include_directories(rocksdb_merge_bench PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(rocksdb_merge_bench PRIVATE RocksDB::rocksdb CLI11::CLI11 fmt::fmt)
 
 file(GLOB ALL_SOURCE_FILES *.cpp *.h)
 add_custom_target(format

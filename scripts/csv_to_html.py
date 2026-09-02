@@ -228,57 +228,41 @@ def resolve_lockfile_version(
     return versions[0]
 
 
-def resolve_git_head(repo_path: Path) -> str:
-    git_dir = repo_path / ".git"
-    head_path = git_dir / "HEAD"
-    if not head_path.exists():
+def resolve_path_dep_version(mace_repo: Path) -> str:
+    cargo_path = mace_repo / "Cargo.toml"
+    if not cargo_path.exists():
         return "unknown"
     try:
-        head_text = head_path.read_text(encoding="utf-8").strip()
-    except OSError:
+        with cargo_path.open("rb") as f:
+            obj = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
         return "unknown"
-
-    if head_text.startswith("ref: "):
-        ref_rel = head_text[5:].strip()
-        ref_path = git_dir / ref_rel
-        if ref_path.exists():
-            try:
-                return ref_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                return "unknown"
-        packed_refs = git_dir / "packed-refs"
-        if packed_refs.exists():
-            try:
-                for line in packed_refs.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#") or line.startswith("^"):
-                        continue
-                    parts = line.split(" ")
-                    if len(parts) == 2 and parts[1] == ref_rel:
-                        return parts[0]
-            except OSError:
-                return "unknown"
+    pkg = obj.get("package")
+    if not isinstance(pkg, dict):
         return "unknown"
-    return head_text
+    ver = pkg.get("version")
+    if not isinstance(ver, str) or not ver.strip():
+        return "unknown"
+    return ver
 
 
 def infer_mace_identity(repo_root: Path) -> tuple[str, str]:
     cargo_path = repo_root / "Cargo.toml"
     if not cargo_path.exists():
-        return ("mace commit id", "unknown")
+        return ("mace version", "unknown")
 
     try:
         with cargo_path.open("rb") as f:
             cargo_obj = tomllib.load(f)
     except (OSError, tomllib.TOMLDecodeError):
-        return ("mace commit id", "unknown")
+        return ("mace version", "unknown")
 
     deps = cargo_obj.get("dependencies", {})
     if not isinstance(deps, dict):
-        return ("mace commit id", "unknown")
+        return ("mace version", "unknown")
     mace_dep = deps.get("mace-kv")
     if mace_dep is None:
-        return ("mace commit id", "unknown")
+        return ("mace version", "unknown")
 
     if isinstance(mace_dep, str):
         requirement = mace_dep.strip() or "*"
@@ -292,7 +276,7 @@ def infer_mace_identity(repo_root: Path) -> tuple[str, str]:
         if isinstance(path_value, str) and path_value.strip():
             dep_path = Path(path_value.strip())
             mace_repo = dep_path if dep_path.is_absolute() else (repo_root / dep_path)
-            return ("mace commit id", resolve_git_head(mace_repo.resolve()))
+            return ("mace version", resolve_path_dep_version(mace_repo))
         version_req = mace_dep.get("version")
         if isinstance(version_req, str) and version_req.strip():
             requirement = version_req.strip()
@@ -301,7 +285,7 @@ def infer_mace_identity(repo_root: Path) -> tuple[str, str]:
                 return ("mace version", lock_version)
             return ("mace version", resolve_crates_io_version("mace-kv", requirement))
 
-    return ("mace commit id", "unknown")
+    return ("mace version", "unknown")
 
 
 def infer_rocksdb_version(repo_root: Path) -> str:
@@ -372,6 +356,20 @@ def workload_label(workload: str) -> str:
     return WORKLOAD_LABELS.get(workload, workload)
 
 
+def merge_workload_label(workload: str) -> str:
+    if workload.startswith("MERGE_GET_"):
+        n = workload[len("MERGE_GET_"):]
+        if n.isdigit():
+            return f"get after {n} merges/key"
+    if workload.startswith("MERGE_"):
+        pct = workload[len("MERGE_"):]
+        if pct.isdigit():
+            if int(pct) == 100:
+                return "100% merge (uniform)"
+            return f"{pct}% merge / {100 - int(pct)}% get (uniform)"
+    return workload
+
+
 def engine_style(engine: str, index: int) -> str:
     normalized = engine.strip().lower()
     if normalized == "mace":
@@ -398,7 +396,7 @@ def read_and_aggregate(csv_path: Path) -> tuple[list[dict[str, Any]], set[str], 
     }
 
     grouped: dict[tuple[str, str, int, int, int], dict[str, list[float]]] = defaultdict(
-        lambda: {"ops": [], "p99_us": []}
+        lambda: {"ops": [], "p99_us": [], "prefill_keys": []}
     )
     engines: set[str] = set()
     kv_pairs: set[tuple[int, int]] = set()
@@ -422,6 +420,11 @@ def read_and_aggregate(csv_path: Path) -> tuple[list[dict[str, Any]], set[str], 
                 value_size = to_int(str(row["value_size"]))
                 ops = to_float(str(row["ops"]))
                 p99 = to_float(str(row["p99_us"]))
+                prefill_keys = (
+                    to_int(str(row["prefill_keys"]))
+                    if row.get("prefill_keys") not in (None, "")
+                    else None
+                )
             except (TypeError, ValueError):
                 skipped += 1
                 continue
@@ -433,6 +436,8 @@ def read_and_aggregate(csv_path: Path) -> tuple[list[dict[str, Any]], set[str], 
             key = (workload, engine, key_size, value_size, threads)
             grouped[key]["ops"].append(ops)
             grouped[key]["p99_us"].append(p99)
+            if prefill_keys is not None:
+                grouped[key]["prefill_keys"].append(prefill_keys)
             engines.add(engine)
             kv_pairs.add((key_size, value_size))
 
@@ -449,6 +454,11 @@ def read_and_aggregate(csv_path: Path) -> tuple[list[dict[str, Any]], set[str], 
                 "threads": threads,
                 "ops": float(statistics.median(values["ops"])),
                 "p99_us": float(statistics.median(values["p99_us"])),
+                "prefill_keys": (
+                    float(statistics.median(values["prefill_keys"]))
+                    if values["prefill_keys"]
+                    else None
+                ),
             }
         )
 
@@ -479,6 +489,7 @@ def build_report_payload(rows: list[dict[str, Any]], engines: set[str], kv_pairs
         by_workload[row["workload"]][series_key].append(row)
 
     workload_items = []
+    merge_items = []
     for workload in sorted(by_workload.keys(), key=workload_sort_key):
         metric_datasets: dict[str, list[dict[str, Any]]] = {"ops": [], "p99_us": []}
         series_map = by_workload[workload]
@@ -497,9 +508,12 @@ def build_report_payload(rows: list[dict[str, Any]], engines: set[str], kv_pairs
                     }
                     for p in points
                 ]
+                label = f"{engine} (k={key_size}, v={value_size})"
+                if workload.startswith("MERGE") and points and points[0].get("prefill_keys") is not None:
+                    label += f", keys={int(points[0]['prefill_keys'])}"
                 metric_datasets[metric].append(
                     {
-                        "label": f"{engine} (k={key_size}, v={value_size})",
+                        "label": label,
                         "data": data_points,
                         "borderColor": color,
                         "backgroundColor": color,
@@ -508,13 +522,16 @@ def build_report_payload(rows: list[dict[str, Any]], engines: set[str], kv_pairs
                     }
                 )
 
-        workload_items.append(
-            {
-                "id": workload,
-                "label": workload_label(workload),
-                "charts": metric_datasets,
-            }
-        )
+        item = {
+            "id": workload,
+            "label": workload_label(workload),
+            "charts": metric_datasets,
+        }
+        if workload.startswith("MERGE"):
+            item["label"] = merge_workload_label(workload)
+            merge_items.append(item)
+        else:
+            workload_items.append(item)
 
     legend_pairs = [
         {"key_size": k, "value_size": v, "color": kv_to_color[(k, v)]}
@@ -527,6 +544,21 @@ def build_report_payload(rows: list[dict[str, Any]], engines: set[str], kv_pairs
 
     return {
         "workloads": workload_items,
+        "merge": {
+            "label": "Merge Operator Comparison",
+            "subtitle": "u64 counter: merge (+1) vs get, fixed 8-byte values, 32-byte keys",
+            "note": (
+                "Methodology: mace's merge runs the full transaction path "
+                "(begin → merge → commit: WAL record, conflict resolution, publish) because mace "
+                "exposes merge only through its transactional API. RocksDB's merge uses the "
+                "non-transactional DB::Merge (WriteBatch append) — its canonical merge write path, "
+                "same as db_bench; an optimistic-transaction Merge would add conflict-checking "
+                "overhead and measure contention handling, not merge-operator throughput. At low "
+                "thread counts the gap therefore partly reflects mace's transaction overhead; at "
+                "higher concurrency mace's parallel write groups and durable merge window take over."
+            ),
+            "workloads": merge_items,
+        },
         "kvLegend": legend_pairs,
         "engineLegend": legend_engines,
     }
@@ -623,6 +655,26 @@ def render_html(
       background-color: #ffffff;
     }}
     .workload {{ margin-top: 22px; }}
+    .merge-section {{
+      margin-top: 34px;
+      padding: 18px 16px 6px;
+      border: 2px solid var(--accent);
+      border-radius: 16px;
+      background: linear-gradient(180deg, #eef2ff 0%, #ffffff 55%);
+    }}
+    .merge-head {{ margin: 0 0 6px; }}
+    .merge-head h2 {{ margin: 0; font-size: 26px; color: var(--accent); }}
+    .merge-sub {{ color: var(--muted); margin: 4px 0 0; font-size: 14px; }}
+    .merge-note {{
+      margin: 10px 0 4px;
+      padding: 10px 12px;
+      border-left: 3px solid var(--accent);
+      background: #f4f6ff;
+      border-radius: 8px;
+      color: #374151;
+      font-size: 13px;
+      line-height: 1.5;
+    }}
     .workload-head {{
       display: flex;
       align-items: center;
@@ -734,6 +786,7 @@ def render_html(
     </div>
 
     <div id="workloads-root"></div>
+    <div id="merge-root"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.min.js"></script>
@@ -958,59 +1011,85 @@ def render_html(
       return chart;
     }}
 
+    let workloadChartSeq = 0;
+
+    function addWorkloadChart(root, w) {{
+      const wIdx = workloadChartSeq++;
+      const section = document.createElement('section');
+      section.className = 'workload';
+
+      section.innerHTML = `
+        <div class="workload-head">
+          <h2>${{w.label}}</h2>
+          <div class="metric-toggle">
+            <span class="metric-label">ops</span>
+            <input id="metric-switch-${{wIdx}}" class="metric-slider" type="range" min="0" max="1" step="1" value="0" />
+            <span class="metric-label">p99</span>
+            <span id="metric-current-${{wIdx}}" class="metric-current">ops</span>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-tools"><button type="button" class="reset-btn" id="chart-reset-${{wIdx}}">Reset zoom</button></div>
+          <canvas id="metric-${{wIdx}}"></canvas>
+        </div>
+      `;
+      root.appendChild(section);
+
+      const chartCanvas = section.querySelector(`#metric-${{wIdx}}`);
+      const chartResetBtn = section.querySelector(`#chart-reset-${{wIdx}}`);
+      const metricSwitch = section.querySelector(`#metric-switch-${{wIdx}}`);
+      const metricCurrent = section.querySelector(`#metric-current-${{wIdx}}`);
+
+      let currentChart = null;
+
+      function renderMetric(metric) {{
+        const yTitle = metric === 'ops' ? 'ops' : 'p99_us';
+        metricCurrent.textContent = metric === 'ops' ? 'ops' : 'p99';
+        if (currentChart) {{
+          currentChart.destroy();
+        }}
+        currentChart = createChart(chartCanvas, `${{w.label}} - ${{yTitle}}`, yTitle, w.charts[metric]);
+      }}
+
+      metricSwitch.addEventListener('input', () => {{
+        const nextMetric = metricSwitch.value === '1' ? 'p99_us' : 'ops';
+        renderMetric(nextMetric);
+      }});
+      chartResetBtn.addEventListener('click', () => {{
+        if (currentChart) currentChart.resetZoom();
+      }});
+      chartCanvas.addEventListener('dblclick', () => {{
+        if (currentChart) currentChart.resetZoom();
+      }});
+
+      renderMetric('ops');
+    }}
+
     function addWorkloads() {{
       const root = document.getElementById('workloads-root');
+      REPORT.workloads.forEach((w) => addWorkloadChart(root, w));
+    }}
 
-      REPORT.workloads.forEach((w, wIdx) => {{
-        const section = document.createElement('section');
-        section.className = 'workload';
-
-        section.innerHTML = `
-          <div class="workload-head">
-            <h2>${{w.label}}</h2>
-            <div class="metric-toggle">
-              <span class="metric-label">ops</span>
-              <input id="metric-switch-${{wIdx}}" class="metric-slider" type="range" min="0" max="1" step="1" value="0" />
-              <span class="metric-label">p99</span>
-              <span id="metric-current-${{wIdx}}" class="metric-current">ops</span>
-            </div>
-          </div>
-          <div class="chart-card">
-            <div class="chart-tools"><button type="button" class="reset-btn" id="chart-reset-${{wIdx}}">Reset zoom</button></div>
-            <canvas id="metric-${{wIdx}}"></canvas>
-          </div>
-        `;
-        root.appendChild(section);
-
-        const chartCanvas = section.querySelector(`#metric-${{wIdx}}`);
-        const chartResetBtn = section.querySelector(`#chart-reset-${{wIdx}}`);
-        const metricSwitch = section.querySelector(`#metric-switch-${{wIdx}}`);
-        const metricCurrent = section.querySelector(`#metric-current-${{wIdx}}`);
-
-        let currentChart = null;
-
-        function renderMetric(metric) {{
-          const yTitle = metric === 'ops' ? 'ops' : 'p99_us';
-          metricCurrent.textContent = metric === 'ops' ? 'ops' : 'p99';
-          if (currentChart) {{
-            currentChart.destroy();
-          }}
-          currentChart = createChart(chartCanvas, `${{w.label}} - ${{yTitle}}`, yTitle, w.charts[metric]);
-        }}
-
-        metricSwitch.addEventListener('input', () => {{
-          const nextMetric = metricSwitch.value === '1' ? 'p99_us' : 'ops';
-          renderMetric(nextMetric);
-        }});
-        chartResetBtn.addEventListener('click', () => {{
-          if (currentChart) currentChart.resetZoom();
-        }});
-        chartCanvas.addEventListener('dblclick', () => {{
-          if (currentChart) currentChart.resetZoom();
-        }});
-
-        renderMetric('ops');
-      }});
+    function addMergeSection() {{
+      const merge = REPORT.merge;
+      if (!merge || !merge.workloads || merge.workloads.length === 0) {{
+        return;
+      }}
+      const root = document.getElementById('merge-root');
+      const section = document.createElement('section');
+      section.className = 'merge-section';
+      const head = document.createElement('div');
+      head.className = 'merge-head';
+      head.innerHTML = `<h2>${{merge.label}}</h2><div class="merge-sub">${{merge.subtitle}}</div>`;
+      if (merge.note) {{
+        const note = document.createElement('div');
+        note.className = 'merge-note';
+        note.textContent = merge.note;
+        head.appendChild(note);
+      }}
+      section.appendChild(head);
+      root.appendChild(section);
+      merge.workloads.forEach((w) => addWorkloadChart(section, w));
     }}
 
     function initSourceDownload() {{
@@ -1022,6 +1101,7 @@ def render_html(
     initSourceDownload();
     addLegends();
     addWorkloads();
+    addMergeSection();
   </script>
 </body>
 </html>
