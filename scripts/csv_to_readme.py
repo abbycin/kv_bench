@@ -38,9 +38,9 @@ WORKLOAD_LABELS = dict(WORKLOAD_TEMPLATE)
 MERGE_LABELS = {
     "MERGE_70": "MERGE_70 (30% get, 70% merge)",
     "MERGE_100": "MERGE_100 (100% merge)",
-    "MERGE_GET_0": "MERGE_GET_0 (fresh get)",
-    "MERGE_GET_1000": "MERGE_GET_1000 (1k operand chain, then get)",
-    "MERGE_GET_10000": "MERGE_GET_10000 (10k operand chain, then get)",
+    "MERGE_GET_0": "MERGE_GET_0 (get after 0 merges/key)",
+    "MERGE_GET_1000": "MERGE_GET_1000 (get after 1k merges/key)",
+    "MERGE_GET_10000": "MERGE_GET_10000 (get after 10k merges/key)",
 }
 DEFAULT_ENGINE_ORDER = ["mace", "rocksdb"]
 ENGINE_DISPLAY = {
