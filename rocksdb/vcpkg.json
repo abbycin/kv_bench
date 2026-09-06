@@ -1,7 +1,12 @@
 {
   "dependencies": [
     "cli11",
-    "rocksdb",
+    {
+      "name": "rocksdb",
+      "features": [
+        "zstd"
+      ]
+    },
     "fmt"
   ],
   "builtin-baseline": "120deac3062162151622ca4860575a33844ba10b",

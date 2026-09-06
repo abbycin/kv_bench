@@ -35,8 +35,11 @@ struct Args {
     #[arg(short = 'i', long, default_value_t = 10000)]
     iterations: usize,
 
-    #[arg(long, default_value_t = 8192)]
+    #[arg(long, default_value_t = 2048)]
     blob_size: usize,
+
+    #[arg(long, action = ArgAction::SetTrue)]
+    compression: bool,
 
     #[arg(long, default_value_t = true)]
     shared_keyspace: bool,
@@ -585,6 +588,7 @@ fn main() {
     bopt.checkpoint_size = 128 << 20;
     bopt.cache_capacity = 4 << 30;
     bopt.enable_backpressure = true;
+    bopt.enable_compression = args.compression;
     bopt.pool_capacity = 1 << 30;
 
     let db = Mace::new(opt.validate().unwrap()).unwrap();

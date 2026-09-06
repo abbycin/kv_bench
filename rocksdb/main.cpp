@@ -65,7 +65,7 @@ struct Args {
     size_t iterations = 10000;
     size_t key_size = 16;
     size_t value_size = 1024;
-    size_t blob_size = 8192;
+    size_t blob_size = 2048;
     bool random = false;
     std::string mode = "insert";
     std::optional<std::string> workload;
@@ -82,6 +82,7 @@ struct Args {
     bool cleanup = true;
     bool skip_prefill = false;
     bool reuse_path = false;
+    bool compression = false;
 };
 
 enum class Distribution {
@@ -543,7 +544,8 @@ static bool run_one_op(OpKind op, rocksdb::OptimisticTransactionDB *db, rocksdb:
         rocksdb::ReadOptions update_ropt;
         txn->SetSnapshot();
         update_ropt.snapshot = txn->GetSnapshot();
-        auto gst = txn->GetForUpdate(update_ropt, handle, key.value(), static_cast<std::string *>(nullptr));
+        std::string old_value;
+        auto gst = txn->GetForUpdate(update_ropt, handle, key.value(), &old_value);
         if (!gst.ok()) {
             delete txn;
             return false;
@@ -641,6 +643,7 @@ int main(int argc, char *argv[]) {
     app.add_flag("--no-shared-keyspace", disable_shared, "Use per-thread keyspace");
     app.add_flag("--no-cleanup", disable_cleanup, "Keep db directory after run");
     app.add_flag("--skip-prefill", args.skip_prefill, "Skip prefill and use existing dataset");
+    app.add_flag("--compression", args.compression, "Enable zstd compression (data/blob)");
     app.add_flag("--reuse-path", args.reuse_path, "Allow opening existing db path");
 
     CLI11_PARSE(app, argc, argv);
@@ -716,6 +719,13 @@ int main(int argc, char *argv[]) {
     cfo.min_blob_size = args.blob_size;
     cfo.write_buffer_size = 64 << 20;
     cfo.max_write_buffer_number = 16;
+    // --compression enables zstd for SST and blob files (requires vcpkg
+    // rocksdb[zstd]); otherwise no compression, symmetric with mace's default
+    // in fair comparisons.
+    cfo.compression = args.compression ? rocksdb::kZSTD
+                                       : rocksdb::kNoCompression;
+    cfo.bottommost_compression = cfo.compression;
+    cfo.blob_compression_type = cfo.compression;
 
     auto cache = rocksdb::NewLRUCache(5 << 30);
     rocksdb::BlockBasedTableOptions table_options{};
