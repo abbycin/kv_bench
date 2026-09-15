@@ -1,6 +1,6 @@
-# kv_bench (Mace vs RocksDB)
+# kv_bench (Mace vs RocksDB vs fjall)
 
-Reproducible benchmark comparison of two embedded KV engines: mace and RocksDB.
+Reproducible benchmark comparison of three embedded KV engines: mace, rocksdb and fjall.
 
 ## Quickstart
 1. Clone the repo:
@@ -16,11 +16,12 @@ cd kv_bench
 ./scripts/init.sh
 ```
 
-3. Run the benchmark for both engines — pass any fast storage path (e.g. an NVMe mount) as the storage root; results are appended to `./scripts/benchmark_results.csv`:
+3. Run the benchmark for each engine — pass any fast storage path (e.g. an NVMe mount) as the storage root; results are appended to `./scripts/benchmark_results.csv`:
 
 ```bash
 ./scripts/mace.sh /path/to/nvme
 ./scripts/rocksdb.sh /path/to/nvme
+./scripts/fjall.sh /path/to/nvme
 ```
 
 4. Generate the comparison report:
@@ -39,18 +40,22 @@ Each engine has its own self-contained benchmark binary with an identical CLI
 
 - mace: `src/bin/mace_bench.rs` → `target/release/mace_bench` (`cargo build --release`)
 - RocksDB: `rocksdb/main.cpp` → `rocksdb/build/release/rocksdb_bench` (cmake)
+- fjall: `src/bin/fjall_bench.rs` → `target/release/fjall_bench` (`cargo build --release`); W1-W6 only, merge workloads excluded (fjall has no merge operator upstream, see `fjall-rs/lsm-tree#104`)
 
-The two harnesses share the same workload definitions, latency accounting and
+The three harnesses share the same workload definitions, latency accounting and
 CSV schema, but each is written directly against its engine's API.
 
 ## What Is Compared
 - Comparison unit: rows with identical `workload_id`, `threads`, `key_size`, `value_size`, `durability_mode`, `read_path`
-- Fairness rule: every workload (`W1`-`W6`) runs one GC/compaction pass after prefill and before warmup/measurement (mace `enable_gc()`, RocksDB compaction), so engines are not compared with GC artificially disabled while reads may have to touch stale data
+- Fairness rule: every workload (`W1`-`W6`) runs one GC/compaction pass after prefill and before warmup/measurement (mace `enable_gc()`, RocksDB compaction, fjall `major_compact()`), so engines are not compared with GC artificially disabled while reads may have to touch stale data
 - Throughput metric: workload-level `ops` (higher is better)
 - Tail latency metric: workload-level `p99_us` (lower is better)
   - This is the workload-level p99 of all operations executed in that row, not per-op-type p99
 - Operation semantics: every measured op is one transaction (write = `begin` + `put` + `commit`; read = snapshot or rw transaction), identical across engines, so `ops` is transactions per second
-- Memory / backpressure strategy differs per engine: mace runs with `enable_backpressure=true`, RocksDB with bounded write buffers (`write_buffer_size=64MB` × `max_write_buffer_number=16`, writes block when full). Both are bounded to ~1 GiB of cache/buffer memory, so the comparison is on the same memory scale
+- Memory / backpressure strategy differs per engine: mace runs with `enable_backpressure=true` and a 4 GiB bucket cache, RocksDB with bounded write buffers (`write_buffer_size=64MB` × `max_write_buffer_number=16`, writes block when full) and a 5 GiB block cache, fjall with default background maintenance and a 4 GiB block cache. All are on the same multi-GB memory scale.
+- Isolation levels differ: mace runs SI, RocksDB `OptimisticTransactionDB` runs SI-style OCC, fjall `OptimisticTxDatabase` runs SSI (serializable snapshot isolation, strictly stronger than SI). Concretely, every fjall write txn tracks its read set (`get` marks reads) plus write set and validates on commit; a `Conflict` is counted as `err_op` with no retry, same accounting as RocksDB OCC conflicts
+  - Measured conflict rates do **not** explain the throughput gaps: on W2 (zipf hotspot) max `err_op` is mace 2.74% / RocksDB 2.78% / fjall 2.28% (fjall aborts the *least*), and on W3/W4 all three sit at ~0.001%. So fjall's W3/W4 multi-thread collapse is write-path contention (journal/memtable/background compaction under SSI txns), not abort storms — but SSI bookkeeping/validation is still part of its per-txn cost
+  - Reading guidance: treat W1/W2/small-value W5/W6 as engine-vs-engine; treat W3/W4 fjall numbers as SSI-transaction-path-vs-SI, not a pure storage-engine delta
 
 ## Why redb and sled Are Not Compared
 Both were evaluated and rejected because their concurrency model cannot be
@@ -89,8 +94,8 @@ multi-threaded concurrent writes.
 Raw CSV path: `./scripts/benchmark_results.csv`
 
 ## Scripts
-- `mace.sh` / `rocksdb.sh` — run the W1-W6 matrix for one engine; first argument is the storage root, second optional argument is the result CSV (defaults to `./scripts/benchmark_results.csv`)
-- `csv_to_html.py` — single-page interactive HTML report (ops and p99 charts per workload, per key/value profile); colors are per key/value pair across engines, fill styles distinguish engines (mace solid, RocksDB hatch)
+- `mace.sh` / `rocksdb.sh` / `fjall.sh` — run the W1-W6 matrix for one engine; first argument is the storage root, second optional argument is the result CSV (defaults to `./scripts/benchmark_results.csv`)
+ - `csv_to_html.py` — single-page interactive HTML report (ops and p99 charts per workload, per key/value profile); colors are per key/value pair across engines, fill styles distinguish engines (mace solid, RocksDB hatch, fjall dot)
 - `compare_baseline.py` — mace-vs-rocksdb ratio table from the CSV (pandas, use the `scripts/bin` venv)
 - `thread_points.sh` — shared power-of-two thread points helper sourced by the run scripts
 - `init.sh` — create the `scripts/bin` venv (pandas) used by the report scripts

@@ -288,6 +288,40 @@ def infer_mace_identity(repo_root: Path) -> tuple[str, str]:
     return ("mace version", "unknown")
 
 
+def infer_fjall_version(repo_root: Path) -> str:
+    cargo_path = repo_root / "Cargo.toml"
+    if not cargo_path.exists():
+        return "unknown"
+
+    try:
+        with cargo_path.open("rb") as f:
+            cargo_obj = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return "unknown"
+
+    deps = cargo_obj.get("dependencies", {})
+    if not isinstance(deps, dict):
+        return "unknown"
+    fjall_dep = deps.get("fjall")
+    if fjall_dep is None:
+        return "unknown"
+
+    requirement = None
+    if isinstance(fjall_dep, str):
+        requirement = fjall_dep.strip() or "*"
+    elif isinstance(fjall_dep, dict):
+        version_req = fjall_dep.get("version")
+        if isinstance(version_req, str) and version_req.strip():
+            requirement = version_req.strip()
+    if not requirement:
+        return "unknown"
+
+    lock_version = resolve_lockfile_version(repo_root, "fjall", requirement)
+    if lock_version != "unknown":
+        return lock_version
+    return resolve_crates_io_version("fjall", requirement)
+
+
 def infer_rocksdb_version(repo_root: Path) -> str:
     vcpkg_path = repo_root / "rocksdb" / "vcpkg.json"
     if not vcpkg_path.exists():
@@ -376,6 +410,8 @@ def engine_style(engine: str, index: int) -> str:
         return "solid"
     if normalized == "rocksdb":
         return "hatch"
+    if normalized == "fjall":
+        return "dot"
     return ENGINE_STYLE_FALLBACK[index % len(ENGINE_STYLE_FALLBACK)]
 
 
@@ -572,6 +608,7 @@ def render_html(
     mace_label: str,
     mace_value: str,
     rocksdb_version: str,
+    fjall_version: str,
 ) -> str:
     payload_json = json.dumps(payload, ensure_ascii=False)
 
@@ -760,6 +797,8 @@ def render_html(
       {mace_label}: <code>{mace_value}</code>
       <br />
       rocksdb version: <code>{rocksdb_version}</code>
+      <br />
+      fjall version: <code>{fjall_version}</code>
       <br />
       test environment:
       <br />
@@ -1127,6 +1166,7 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     mace_label, mace_value = infer_mace_identity(repo_root)
     rocksdb_version = infer_rocksdb_version(repo_root)
+    fjall_version = infer_fjall_version(repo_root)
     html = render_html(
         payload,
         str(csv_path),
@@ -1135,6 +1175,7 @@ def main() -> int:
         mace_label,
         mace_value,
         rocksdb_version,
+        fjall_version,
     )
 
     output_path.write_text(html, encoding="utf-8")
