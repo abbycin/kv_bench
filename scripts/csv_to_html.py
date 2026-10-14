@@ -18,6 +18,7 @@ ENGINE_STYLE_FALLBACK = [
     "solid",
     "hatch",
     "dot",
+    "grid",
 ]
 
 WORKLOAD_TEMPLATE = [
@@ -288,7 +289,8 @@ def infer_mace_identity(repo_root: Path) -> tuple[str, str]:
     return ("mace version", "unknown")
 
 
-def infer_fjall_version(repo_root: Path) -> str:
+def infer_crates_dep_version(repo_root: Path, dep_name: str) -> str:
+    """Version of a plain crates.io dependency: Cargo.lock first, then crates.io."""
     cargo_path = repo_root / "Cargo.toml"
     if not cargo_path.exists():
         return "unknown"
@@ -302,24 +304,32 @@ def infer_fjall_version(repo_root: Path) -> str:
     deps = cargo_obj.get("dependencies", {})
     if not isinstance(deps, dict):
         return "unknown"
-    fjall_dep = deps.get("fjall")
-    if fjall_dep is None:
+    dep = deps.get(dep_name)
+    if dep is None:
         return "unknown"
 
     requirement = None
-    if isinstance(fjall_dep, str):
-        requirement = fjall_dep.strip() or "*"
-    elif isinstance(fjall_dep, dict):
-        version_req = fjall_dep.get("version")
+    if isinstance(dep, str):
+        requirement = dep.strip() or "*"
+    elif isinstance(dep, dict):
+        version_req = dep.get("version")
         if isinstance(version_req, str) and version_req.strip():
             requirement = version_req.strip()
     if not requirement:
         return "unknown"
 
-    lock_version = resolve_lockfile_version(repo_root, "fjall", requirement)
+    lock_version = resolve_lockfile_version(repo_root, dep_name, requirement)
     if lock_version != "unknown":
         return lock_version
-    return resolve_crates_io_version("fjall", requirement)
+    return resolve_crates_io_version(dep_name, requirement)
+
+
+def infer_fjall_version(repo_root: Path) -> str:
+    return infer_crates_dep_version(repo_root, "fjall")
+
+
+def infer_surrealkv_version(repo_root: Path) -> str:
+    return infer_crates_dep_version(repo_root, "surrealkv")
 
 
 def infer_rocksdb_version(repo_root: Path) -> str:
@@ -412,6 +422,8 @@ def engine_style(engine: str, index: int) -> str:
         return "hatch"
     if normalized == "fjall":
         return "dot"
+    if normalized == "surrealkv":
+        return "grid"
     return ENGINE_STYLE_FALLBACK[index % len(ENGINE_STYLE_FALLBACK)]
 
 
@@ -609,6 +621,7 @@ def render_html(
     mace_value: str,
     rocksdb_version: str,
     fjall_version: str,
+    surrealkv_version: str,
 ) -> str:
     payload_json = json.dumps(payload, ensure_ascii=False)
 
@@ -690,6 +703,23 @@ def render_html(
       background-image: radial-gradient(#111827 28%, transparent 30%);
       background-size: 6px 6px;
       background-color: #ffffff;
+    }}
+    .engine-swatch.grid {{
+      background-color: #ffffff;
+      background-image: repeating-linear-gradient(
+          0deg,
+          #111827 0px,
+          #111827 2px,
+          transparent 2px,
+          transparent 7px
+        ),
+        repeating-linear-gradient(
+          90deg,
+          #111827 0px,
+          #111827 2px,
+          transparent 2px,
+          transparent 7px
+        );
     }}
     .workload {{ margin-top: 22px; }}
     .merge-section {{
@@ -800,6 +830,8 @@ def render_html(
       <br />
       fjall version: <code>{fjall_version}</code>
       <br />
+      surrealkv version: <code>{surrealkv_version}</code>
+      <br />
       test environment:
       <br />
       - OS: openSUSE Tumbleweed
@@ -896,6 +928,15 @@ def render_html(
         pctx.beginPath();
         pctx.arc(8, 8, 1.5, 0, Math.PI * 2);
         pctx.fill();
+      }} else if (style === 'grid') {{
+        pctx.strokeStyle = color;
+        pctx.lineWidth = 2;
+        pctx.beginPath();
+        pctx.moveTo(0, 5);
+        pctx.lineTo(10, 5);
+        pctx.moveTo(5, 0);
+        pctx.lineTo(5, 10);
+        pctx.stroke();
       }} else {{
         return color;
       }}
@@ -1167,6 +1208,7 @@ def main() -> int:
     mace_label, mace_value = infer_mace_identity(repo_root)
     rocksdb_version = infer_rocksdb_version(repo_root)
     fjall_version = infer_fjall_version(repo_root)
+    surrealkv_version = infer_surrealkv_version(repo_root)
     html = render_html(
         payload,
         str(csv_path),
@@ -1176,6 +1218,7 @@ def main() -> int:
         mace_value,
         rocksdb_version,
         fjall_version,
+        surrealkv_version,
     )
 
     output_path.write_text(html, encoding="utf-8")

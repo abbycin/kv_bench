@@ -50,6 +50,7 @@ ENGINE_DISPLAY = {
     "sqlite": "SQLite",
     "lmdb": "LMDB",
     "fjall": "fjall",
+    "surrealkv": "SurrealKV",
 }
 
 
